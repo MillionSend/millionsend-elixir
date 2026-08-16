@@ -1,26 +1,45 @@
 defmodule MillionSend.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @source_url "https://github.com/MillionSend/millionsend"
+
   def project do
     [
       app: :millionsend,
-      version: "0.0.1",
-      elixir: "~> 1.14",
+      version: @version,
+      elixir: "~> 1.15",
+      elixirc_paths: elixirc_paths(Mix.env()),
+      deps: deps(),
       description:
-        "Official Elixir SDK for MillionSend — the open-source email platform. Under active development; this release reserves the package name.",
+        "Official Elixir SDK for MillionSend — a self-hostable, Resend-compatible email API.",
       package: package(),
-      deps: []
+      name: "MillionSend",
+      source_url: @source_url,
+      docs: [main: "MillionSend", source_ref: "v#{@version}"]
     ]
   end
 
   def application do
-    [extra_applications: []]
+    [extra_applications: [:logger]]
+  end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
+  defp deps do
+    [
+      {:req, "~> 0.5"},
+      {:jason, "~> 1.4"},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+    ]
   end
 
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => "https://github.com/MillionSend/millionsend-elixir"}
+      links: %{"GitHub" => @source_url},
+      files: ~w(lib mix.exs README.md LICENSE .formatter.exs)
     ]
   end
 end
