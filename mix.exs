@@ -2,7 +2,7 @@ defmodule MillionSend.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/MillionSend/millionsend"
+  @source_url "https://github.com/MillionSend/millionsend-elixir"
 
   def project do
     [
