@@ -34,7 +34,11 @@ defmodule MillionSend.Contacts do
 
   @type address :: String.t() | map()
 
-  @doc "`POST /audiences/:audience_id/contacts` (or `/contacts`)."
+  @doc """
+  `POST /audiences/:audience_id/contacts`. The API requires `:audience_id` —
+  without it the request goes to `/contacts`, which always answers 422
+  `"audience_id is required"` (mirrors Resend).
+  """
   @spec create(Client.t(), map()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
   def create(client \\ MillionSend.client(), params) when is_map(params) do
     Request.run(client,
