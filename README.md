@@ -11,7 +11,7 @@ find-and-replace: swap the module prefix and point `base_url` at your instance.
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.1"}]
+  [{:millionsend, "~> 0.2"}]
 end
 ```
 
@@ -102,21 +102,18 @@ MillionSend.Emails.send_batch([a, b], idempotency_key: key)  # POST /emails/batc
 Input maps are snake_case (`:reply_to`, `:scheduled_at`); `:to`/`:cc`/`:bcc`/
 `:reply_to` accept a string or a list of strings.
 
-### Audiences & contacts
+### Contacts
+
+Contacts are team-global — one per email per team (case-insensitive).
 
 ```elixir
-{:ok, audience} = MillionSend.Audiences.create(%{name: "Registered users"})
-MillionSend.Audiences.list(limit: 20, after: cursor)
-MillionSend.Audiences.get(id)
-MillionSend.Audiences.remove(id)
-
-MillionSend.Contacts.create(%{audience_id: aud, email: "ada@acme.dev",
+MillionSend.Contacts.create(%{email: "ada@acme.dev",
                               first_name: "Ada", properties: %{plan: "pro"}})
-MillionSend.Contacts.get(%{audience_id: aud, email: "ada@acme.dev"})  # id or email (email wins)
-MillionSend.Contacts.get("contact-uuid")                              # bare id works too
+MillionSend.Contacts.get(%{email: "ada@acme.dev"})     # id or email (email wins)
+MillionSend.Contacts.get("contact-uuid")               # bare id works too
 MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil})  # nil clears
 MillionSend.Contacts.remove(%{email: "ada@acme.dev"})
-MillionSend.Contacts.list(audience_id: aud, limit: 50)
+MillionSend.Contacts.list(limit: 50, after: cursor)
 
 # Topic subscriptions (granular unsubscribe)
 MillionSend.Contacts.update_topics(%{email: "ada@acme.dev",
@@ -135,8 +132,9 @@ MillionSend.Topics.remove(id)
 ### Broadcasts
 
 ```elixir
+# Target with segment_id: and/or topic_id:; omit both to send to all contacts.
 {:ok, broadcast} = MillionSend.Broadcasts.create(%{
-  audience_id: aud, from: "Acme <news@acme.dev>", subject: "Launch",
+  from: "Acme <news@acme.dev>", subject: "Launch",
   html: "<p>Hi {{{FIRST_NAME|there}}}</p>"
 })
 MillionSend.Broadcasts.list()
@@ -149,13 +147,12 @@ MillionSend.Broadcasts.remove(id)                                      # draft o
 
 ### Segments (MillionSend extension)
 
-Dynamic segments are a saved filter over an audience's contacts — a MillionSend
-superset with no Resend equivalent (wire path `/segments2`).
+Dynamic segments are a saved filter over the team's contacts — a MillionSend
+superset with no Resend equivalent.
 
 ```elixir
 MillionSend.Segments.create(%{
   name: "Pro plan",
-  audience_id: aud,
   filter: %{match: :all, conditions: [%{field: "property:plan", op: "equals", value: "pro"}]}
 })
 MillionSend.Segments.get(id)   # includes a live contact_count
@@ -180,8 +177,9 @@ Module names, function names and payloads match. Notes:
 
 - **Domains and API keys** are managed in the MillionSend dashboard, not via the
   API, so there are no `Domains`/`ApiKeys` modules here.
-- Resend's segments are an alias of audiences; MillionSend's `Segments` are the
-  distinct dynamic-filter feature. Use `Audiences` for a straight port.
+- **No audiences.** Contacts are team-global; drop the `audience_id` from
+  `contacts.*` calls. Target broadcasts with a `segment_id` (a dynamic filter)
+  and/or a `topic_id` instead.
 
 ## Testing against a real instance
 

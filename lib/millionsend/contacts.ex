@@ -16,12 +16,11 @@ end
 
 defmodule MillionSend.Contacts do
   @moduledoc """
-  Contacts, addressable by id **or** email — email wins when both are given.
-  Pass `:audience_id` to scope a call to an audience; omit it for the top-level
-  contact routes.
+  Contacts are team-global (one per email per team, case-insensitive) and
+  addressable by id **or** email — email wins when both are given.
 
-      MillionSend.Contacts.create(%{audience_id: aud, email: "ada@acme.dev", first_name: "Ada"})
-      MillionSend.Contacts.get(%{audience_id: aud, email: "ada@acme.dev"})
+      MillionSend.Contacts.create(%{email: "ada@acme.dev", first_name: "Ada"})
+      MillionSend.Contacts.get(%{email: "ada@acme.dev"})
       MillionSend.Contacts.get("contact-uuid")
       MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil}) # nil clears
   """
@@ -35,27 +34,26 @@ defmodule MillionSend.Contacts do
   @type address :: String.t() | map()
 
   @doc """
-  `POST /audiences/:audience_id/contacts`. The API requires `:audience_id` —
-  without it the request goes to `/contacts`, which always answers 422
-  `"audience_id is required"` (mirrors Resend).
+  `POST /contacts`. A duplicate email (per team, case-insensitive) is a 409
+  `validation_error`.
   """
   @spec create(Client.t(), map()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
   def create(client \\ MillionSend.client(), params) when is_map(params) do
     Request.run(client,
       method: :post,
-      path: collection_path(params),
+      path: "/contacts",
       body: Request.take(params, @create_fields),
       as: Contact
     )
   end
 
-  @doc "`GET` a contact by id/email map or a bare id string."
+  @doc "`GET /contacts/:id_or_email` — by id/email map or a bare id string."
   @spec get(Client.t(), address()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
   def get(client \\ MillionSend.client(), address) do
     Request.run(client, method: :get, path: member_path(address), as: Contact)
   end
 
-  @doc "`PATCH` a contact. Include a key with `nil` to clear it; omit to leave unchanged."
+  @doc "`PATCH /contacts/:id_or_email`. Include a key with `nil` to clear it; omit to leave unchanged."
   @spec update(Client.t(), map()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
   def update(client \\ MillionSend.client(), params) when is_map(params) do
     Request.run(client,
@@ -66,13 +64,13 @@ defmodule MillionSend.Contacts do
     )
   end
 
-  @doc "`DELETE` a contact by id/email map or a bare id string."
+  @doc "`DELETE /contacts/:id_or_email` — by id/email map or a bare id string."
   @spec remove(Client.t(), address()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
   def remove(client \\ MillionSend.client(), address) do
     Request.run(client, method: :delete, path: member_path(address), as: Contact)
   end
 
-  @doc "`GET` contacts. Accepts `audience_id:`, `limit:`, `after:`, `before:`."
+  @doc "`GET /contacts` — accepts `limit:`, `after:`, `before:`."
   @spec list(Client.t() | keyword()) ::
           {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
   def list(), do: list(MillionSend.client(), [])
@@ -84,15 +82,15 @@ defmodule MillionSend.Contacts do
   def list(%Client{} = client, opts) when is_list(opts) do
     Request.run(client,
       method: :get,
-      path: collection_path(Map.new(opts)),
+      path: "/contacts",
       query: Request.list_query(opts),
       as: {:list, Contact}
     )
   end
 
   @doc """
-  `PATCH /contacts/:id_or_email/topics` — set per-topic subscriptions (always a
-  top-level route). `params` carries the address plus `topics:` as a list of
+  `PATCH /contacts/:id_or_email/topics` — set per-topic subscriptions. `params`
+  carries the address plus `topics:` as a list of
   `%{id: ..., subscription: :opt_in | :opt_out}`.
   """
   @spec update_topics(Client.t(), map()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
@@ -101,23 +99,13 @@ defmodule MillionSend.Contacts do
 
     Request.run(client,
       method: :patch,
-      path: "/contacts/" <> member_key(params) <> "/topics",
+      path: member_path(params) <> "/topics",
       body: topics,
       as: Contact
     )
   end
 
-  defp collection_path(map) do
-    case Map.get(map, :audience_id) || Map.get(map, "audience_id") do
-      nil -> "/contacts"
-      audience_id -> "/audiences/" <> Request.encode(audience_id) <> "/contacts"
-    end
-  end
-
-  defp member_path(address) do
-    map = normalize(address)
-    collection_path(map) <> "/" <> member_key(map)
-  end
+  defp member_path(address), do: "/contacts/" <> member_key(normalize(address))
 
   # Email wins over id when both are present.
   defp member_key(map) do

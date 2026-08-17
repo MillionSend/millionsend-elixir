@@ -1,10 +1,9 @@
 defmodule MillionSend.Broadcasts.Broadcast do
-  @moduledoc "A broadcast — an email sent to an audience or segment."
+  @moduledoc "A broadcast — an email sent to the team's contacts, optionally targeted."
   defstruct [
     :object,
     :id,
     :name,
-    :audience_id,
     :segment_id,
     :status,
     :created_at,
@@ -24,9 +23,11 @@ end
 defmodule MillionSend.Broadcasts do
   @moduledoc """
   Broadcasts. Create a draft, then `send/3` it (optionally scheduled).
+  Target with an optional `segment_id` and/or `topic_id`; neither means every
+  contact of the team.
 
       {:ok, b} = MillionSend.Broadcasts.create(%{
-        audience_id: aud, from: "Acme <news@acme.dev>", subject: "Launch", html: "<p>hi</p>"
+        from: "Acme <news@acme.dev>", subject: "Launch", html: "<p>hi</p>"
       })
       MillionSend.Broadcasts.send(b.id, scheduled_at: "2026-09-01T09:00:00Z")
   """
@@ -37,7 +38,7 @@ defmodule MillionSend.Broadcasts do
   alias MillionSend.{Client, Request}
   alias MillionSend.Broadcasts.Broadcast
 
-  @fields [:name, :audience_id, :segment_id, :from, :subject, :html, :text, :reply_to, :topic_id]
+  @fields [:name, :segment_id, :from, :subject, :html, :text, :reply_to, :topic_id]
 
   @doc "`POST /broadcasts`"
   @spec create(Client.t(), map()) :: {:ok, Broadcast.t()} | {:error, MillionSend.Error.t()}

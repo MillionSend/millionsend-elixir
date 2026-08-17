@@ -41,49 +41,21 @@ defmodule MillionSend.ResourcesTest do
     end
   end
 
-  describe "audiences" do
-    test "covers create/get/list/remove", %{client: c} do
-      assert {:ok, _} = MillionSend.Audiences.create(c, %{name: "Users"})
-      assert req_method() == :post and req_path() == "/audiences"
-      assert req_body() == %{"name" => "Users"}
-
-      assert {:ok, _} = MillionSend.Audiences.get(c, "a1")
-      assert req_path() == "/audiences/a1"
-
-      assert {:ok, %MillionSend.List{}} = MillionSend.Audiences.list(c, limit: 10)
-      assert req_path() == "/audiences"
-      assert req_query() == "limit=10"
-
-      assert {:ok, _} = MillionSend.Audiences.remove(c, "a1")
-      assert req_method() == :delete and req_path() == "/audiences/a1"
-    end
-  end
-
   describe "contacts" do
-    test "creates audience-scoped and top-level", %{client: c} do
+    test "creates at the top-level collection", %{client: c} do
       assert {:ok, _} =
-               MillionSend.Contacts.create(c, %{
-                 audience_id: "a1",
-                 email: "c@x.dev",
-                 first_name: "Ada"
-               })
+               MillionSend.Contacts.create(c, %{email: "c@x.dev", first_name: "Ada"})
 
-      assert req_path() == "/audiences/a1/contacts"
+      assert req_method() == :post and req_path() == "/contacts"
       assert req_body() == %{"email" => "c@x.dev", "first_name" => "Ada"}
-
-      assert {:ok, _} = MillionSend.Contacts.create(c, %{email: "c@x.dev"})
-      assert req_path() == "/contacts"
     end
 
-    test "addresses by string id, email, and scoped id", %{client: c} do
+    test "addresses by string id and by email", %{client: c} do
       assert {:ok, _} = MillionSend.Contacts.get(c, "c1")
       assert req_path() == "/contacts/c1"
 
       assert {:ok, _} = MillionSend.Contacts.get(c, %{email: "c@x.dev"})
       assert req_path() == "/contacts/c%40x.dev"
-
-      assert {:ok, _} = MillionSend.Contacts.get(c, %{audience_id: "a1", id: "c1"})
-      assert req_path() == "/audiences/a1/contacts/c1"
     end
 
     test "email wins over id when both are given", %{client: c} do
@@ -99,14 +71,12 @@ defmodule MillionSend.ResourcesTest do
       assert req_body() == %{"first_name" => nil, "unsubscribed" => true}
     end
 
-    test "remove and scoped list", %{client: c} do
+    test "remove and list", %{client: c} do
       assert {:ok, _} = MillionSend.Contacts.remove(c, %{email: "c@x.dev"})
       assert req_method() == :delete
 
-      assert {:ok, %MillionSend.List{}} =
-               MillionSend.Contacts.list(c, audience_id: "a1", after: "cur")
-
-      assert req_path() == "/audiences/a1/contacts"
+      assert {:ok, %MillionSend.List{}} = MillionSend.Contacts.list(c, after: "cur")
+      assert req_path() == "/contacts"
       assert req_query() == "after=cur"
     end
 
@@ -128,7 +98,7 @@ defmodule MillionSend.ResourcesTest do
     test "covers the full lifecycle", %{client: c} do
       assert {:ok, _} =
                MillionSend.Broadcasts.create(c, %{
-                 audience_id: "a1",
+                 segment_id: "s1",
                  from: "a@x.dev",
                  subject: "News",
                  html: "<p>hi</p>"
@@ -137,7 +107,7 @@ defmodule MillionSend.ResourcesTest do
       assert req_path() == "/broadcasts"
 
       assert req_body() == %{
-               "audience_id" => "a1",
+               "segment_id" => "s1",
                "from" => "a@x.dev",
                "subject" => "News",
                "html" => "<p>hi</p>"
@@ -192,17 +162,15 @@ defmodule MillionSend.ResourcesTest do
   end
 
   describe "segments" do
-    test "covers create/get/list/update/remove on /segments2", %{client: c} do
+    test "covers create/get/list/update/remove on /segments", %{client: c} do
       filter = %{match: "all", conditions: [%{field: "email", op: "is_set"}]}
 
-      assert {:ok, _} =
-               MillionSend.Segments.create(c, %{name: "Active", audience_id: "a1", filter: filter})
+      assert {:ok, _} = MillionSend.Segments.create(c, %{name: "Active", filter: filter})
 
-      assert req_path() == "/segments2"
+      assert req_path() == "/segments"
 
       assert req_body() == %{
                "name" => "Active",
-               "audience_id" => "a1",
                "filter" => %{
                  "match" => "all",
                  "conditions" => [%{"field" => "email", "op" => "is_set"}]
@@ -210,14 +178,14 @@ defmodule MillionSend.ResourcesTest do
              }
 
       assert {:ok, _} = MillionSend.Segments.get(c, "s1")
-      assert req_path() == "/segments2/s1"
+      assert req_path() == "/segments/s1"
 
       assert {:ok, %MillionSend.List{}} = MillionSend.Segments.list(c, before: "cur")
-      assert req_path() == "/segments2"
+      assert req_path() == "/segments"
       assert req_query() == "before=cur"
 
       assert {:ok, _} = MillionSend.Segments.update(c, "s1", %{name: "Renamed"})
-      assert req_method() == :patch and req_path() == "/segments2/s1"
+      assert req_method() == :patch and req_path() == "/segments/s1"
 
       assert {:ok, _} = MillionSend.Segments.remove(c, "s1")
       assert req_method() == :delete
@@ -229,19 +197,19 @@ defmodule MillionSend.ResourcesTest do
       stub_json(%{
         "object" => "list",
         "has_more" => true,
-        "data" => [%{"id" => "a1", "name" => "Users", "created_at" => "2026-01-01"}]
+        "data" => [%{"id" => "s1", "name" => "Active", "created_at" => "2026-01-01"}]
       })
 
-      assert {:ok, list} = MillionSend.Audiences.list(c)
+      assert {:ok, list} = MillionSend.Segments.list(c)
       assert list.has_more == true
-      assert [%MillionSend.Audiences.Audience{id: "a1", name: "Users"}] = list.data
+      assert [%MillionSend.Segments.Segment{id: "s1", name: "Active"}] = list.data
     end
 
     test "delete response casts deleted flag", %{client: c} do
-      stub_json(%{"object" => "audience", "id" => "a1", "deleted" => true})
+      stub_json(%{"object" => "segment", "id" => "s1", "deleted" => true})
 
-      assert {:ok, %MillionSend.Audiences.Audience{deleted: true, id: "a1"}} =
-               MillionSend.Audiences.remove(c, "a1")
+      assert {:ok, %MillionSend.Segments.Segment{deleted: true, id: "s1"}} =
+               MillionSend.Segments.remove(c, "s1")
     end
   end
 end
