@@ -61,6 +61,10 @@ Resolution precedence for each option: explicit `MillionSend.client/1` opts →
 - `api_key` is required; missing everywhere raises `ArgumentError`.
 - `base_url` defaults to `http://localhost:3001`. MillionSend is self-hosted, so
   **set this to your deployment in production.**
+- `allow_insecure_http` (optional, default `false`). Plain `http://` is only accepted
+  for loopback hosts (`localhost`, `127.0.0.1`, `::1`); any other `http://` URL raises
+  `ArgumentError`, since the API key is sent as a bearer header. Set it to `true` to
+  talk to a non-TLS instance elsewhere (e.g. inside a private network).
 - `user_agent` (optional) appends a suffix after the SDK's own User-Agent token.
 - `http_client` (optional) swaps the HTTP layer — any module implementing the
   `MillionSend.HTTP` behaviour (used to stub requests in tests).

@@ -15,7 +15,11 @@ defmodule MillionSend.Client do
           http_client: module()
         }
 
+  # The API key must never reach logs or crash reports through inspect/1.
+  @derive {Inspect, except: [:api_key]}
   defstruct [:api_key, :base_url, :user_agent, http_client: MillionSend.HTTP.Req]
+
+  @loopback_hosts ["localhost", "127.0.0.1", "::1"]
 
   @doc """
   Resolves a client from (in precedence order) the given `opts`, the
@@ -24,7 +28,9 @@ defmodule MillionSend.Client do
 
   Options: `:api_key`, `:base_url`, `:user_agent` (a suffix appended to the
   SDK's own User-Agent token), `:http_client` (a module implementing
-  `MillionSend.HTTP`, for tests/proxies).
+  `MillionSend.HTTP`, for tests/proxies), `:allow_insecure_http` (accept a
+  plain `http://` base URL on a non-loopback host; off by default because the
+  API key travels as a bearer header).
   """
   @spec new(keyword()) :: t()
   def new(opts \\ []) do
@@ -44,12 +50,31 @@ defmodule MillionSend.Client do
          @default_base_url)
       |> String.trim_trailing("/")
 
+    allow_insecure_http = opts[:allow_insecure_http] || config[:allow_insecure_http] || false
+
+    if not allow_insecure_http and insecure_http?(base_url) do
+      raise ArgumentError,
+            "Refusing to send the API key over plain http to #{base_url}. Use https, " <>
+              "or set allow_insecure_http: true."
+    end
+
     %__MODULE__{
       api_key: api_key,
       base_url: base_url,
       http_client: opts[:http_client] || config[:http_client] || MillionSend.HTTP.Req,
       user_agent: user_agent(opts[:user_agent] || config[:user_agent])
     }
+  end
+
+  defp insecure_http?(url) do
+    case URI.parse(url) do
+      %URI{scheme: "http", host: host} when is_binary(host) ->
+        host = String.downcase(host)
+        host not in @loopback_hosts and not String.starts_with?(host, "127.")
+
+      _ ->
+        false
+    end
   end
 
   defp user_agent(nil), do: @user_agent

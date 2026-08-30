@@ -28,6 +28,36 @@ defmodule MillionSend.ClientTest do
       System.delete_env("MILLIONSEND_BASE_URL")
     end
 
+    test "refuses a non-loopback http base url unless allow_insecure_http is set" do
+      assert_raise ArgumentError, ~r/allow_insecure_http/, fn ->
+        MillionSend.client(api_key: "k", base_url: "http://mail.example.com")
+      end
+
+      System.put_env("MILLIONSEND_BASE_URL", "http://mail.example.com")
+      on_exit(fn -> System.delete_env("MILLIONSEND_BASE_URL") end)
+
+      assert_raise ArgumentError, ~r/allow_insecure_http/, fn ->
+        MillionSend.client(api_key: "k")
+      end
+
+      client =
+        MillionSend.client(
+          api_key: "k",
+          base_url: "http://mail.example.com",
+          allow_insecure_http: true
+        )
+
+      assert client.base_url == "http://mail.example.com"
+      assert MillionSend.client(api_key: "k", base_url: "http://localhost:3001").base_url
+      assert MillionSend.client(api_key: "k", base_url: "http://127.0.0.1:3001").base_url
+    end
+
+    test "keeps the api key out of inspect output" do
+      client = MillionSend.client(api_key: "ms_secret_key", base_url: "https://api.test")
+      refute inspect(client) =~ "ms_secret_key"
+      assert client.api_key == "ms_secret_key"
+    end
+
     test "strips trailing slashes from the base url" do
       client = MillionSend.client(api_key: "k", base_url: "https://api.test//")
       assert client.base_url == "https://api.test"
