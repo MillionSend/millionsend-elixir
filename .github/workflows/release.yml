@@ -1,9 +1,7 @@
 name: release
 
 # Publishes to Hex. Hex has no OIDC trusted publishing, so this needs a
-# package-scoped HEX_API_KEY secret stored on the `hex` environment
-# (hex.pm → dashboard → keys, write scope), which gates each run behind
-# the environment's required reviewers.
+# HEX_API_KEY repository secret (hex.pm → dashboard → keys, write scope).
 on:
   workflow_dispatch:
 
@@ -13,7 +11,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: hex
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: erlef/setup-beam@0f75c29430f34bb5af4cce5e3b7f6a8860fca236 # v1
