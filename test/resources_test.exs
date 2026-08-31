@@ -17,6 +17,174 @@ defmodule MillionSend.ResourcesTest do
       assert req_method() == :post
       assert req_path() == "/emails/e1/cancel"
     end
+
+    test "get carries the score field, present or null", %{client: c} do
+      stub_json(%{"object" => "email", "id" => "e1", "score" => 8.5})
+      assert {:ok, %MillionSend.Emails.Email{score: 8.5}} = MillionSend.Emails.get(c, "e1")
+
+      stub_json(%{"object" => "email", "id" => "e1", "score" => nil})
+      assert {:ok, %MillionSend.Emails.Email{score: nil}} = MillionSend.Emails.get(c, "e1")
+    end
+  end
+
+  describe "insights" do
+    test "get_insights casts the full report, checks with and without detail", %{client: c} do
+      stub_json(%{
+        "object" => "email_insights",
+        "email_id" => "e1",
+        "score" => 8.5,
+        "score_version" => 1,
+        "band" => "excellent",
+        "marketing" => true,
+        "html_size_bytes" => 12_345,
+        "computed_at" => "2026-08-31T00:00:00.000Z",
+        "checks" => [
+          %{
+            "id" => "list_unsubscribe",
+            "severity" => "critical",
+            "status" => "fail",
+            "penalty" => 1.25,
+            "detail" => %{"header" => "List-Unsubscribe", "found" => false}
+          },
+          %{"id" => "plain_text_part", "severity" => "minor", "status" => "pass", "penalty" => 0}
+        ]
+      })
+
+      assert {:ok, insights} = MillionSend.Emails.get_insights(c, "e1")
+      assert req_method() == :get
+      assert req_path() == "/emails/e1/insights"
+
+      assert %MillionSend.Emails.Insights{
+               object: "email_insights",
+               email_id: "e1",
+               score: 8.5,
+               score_version: 1,
+               band: "excellent",
+               marketing: true,
+               html_size_bytes: 12_345,
+               computed_at: "2026-08-31T00:00:00.000Z"
+             } = insights
+
+      assert [failed, passed] = insights.checks
+
+      assert %MillionSend.Emails.Insights.Check{
+               id: "list_unsubscribe",
+               severity: "critical",
+               status: "fail",
+               penalty: 1.25,
+               detail: %{"header" => "List-Unsubscribe", "found" => false}
+             } = failed
+
+      assert %MillionSend.Emails.Insights.Check{
+               id: "plain_text_part",
+               severity: "minor",
+               status: "pass",
+               penalty: 0,
+               detail: nil
+             } = passed
+    end
+
+    test "unknown future band/severity/status values pass through as strings", %{client: c} do
+      stub_json(%{
+        "object" => "email_insights",
+        "email_id" => "e1",
+        "score" => 5.0,
+        "score_version" => 9,
+        "band" => "stellar",
+        "marketing" => false,
+        "html_size_bytes" => nil,
+        "computed_at" => "2026-08-31T00:00:00.000Z",
+        "checks" => [
+          %{
+            "id" => "brand_new_check",
+            "severity" => "cosmic",
+            "status" => "deferred",
+            "penalty" => 0
+          }
+        ]
+      })
+
+      assert {:ok, insights} = MillionSend.Emails.get_insights(c, "e1")
+      assert insights.band == "stellar"
+      assert [%{id: "brand_new_check", severity: "cosmic", status: "deferred"}] = insights.checks
+    end
+
+    test "404 surfaces as a not_found error", %{client: c} do
+      stub_response(404, %{
+        "statusCode" => 404,
+        "name" => "not_found",
+        "message" => "Insights not available"
+      })
+
+      assert {:error, %MillionSend.Error{status_code: 404, name: "not_found"}} =
+               MillionSend.Emails.get_insights(c, "missing")
+    end
+  end
+
+  describe "deliverability" do
+    test "get casts the full account report", %{client: c} do
+      stub_json(%{
+        "object" => "deliverability",
+        "score" => 8.7,
+        "band" => "good",
+        "content_score" => 8.2,
+        "outcome_score" => 9.1,
+        "complaint_rate" => 0.0002,
+        "hard_bounce_rate" => 0.001,
+        "emails_sent" => 12_345,
+        "scored_recipients" => 23_456,
+        "window_days" => 30,
+        "insufficient_outcome_data" => false,
+        "guardrail_status" => "ok",
+        "score_version" => 1
+      })
+
+      assert {:ok, report} = MillionSend.Deliverability.get(c)
+      assert req_method() == :get
+      assert req_path() == "/deliverability"
+
+      assert %MillionSend.Deliverability{
+               object: "deliverability",
+               score: 8.7,
+               band: "good",
+               content_score: 8.2,
+               outcome_score: 9.1,
+               complaint_rate: 0.0002,
+               hard_bounce_rate: 0.001,
+               emails_sent: 12_345,
+               scored_recipients: 23_456,
+               window_days: 30,
+               insufficient_outcome_data: false,
+               guardrail_status: "ok",
+               score_version: 1
+             } = report
+    end
+
+    test "null scores stay nil; unknown guardrail_status stays a string", %{client: c} do
+      stub_json(%{
+        "object" => "deliverability",
+        "score" => nil,
+        "band" => nil,
+        "content_score" => nil,
+        "outcome_score" => nil,
+        "complaint_rate" => 0.0,
+        "hard_bounce_rate" => 0.0,
+        "emails_sent" => 0,
+        "scored_recipients" => 0,
+        "window_days" => 30,
+        "insufficient_outcome_data" => true,
+        "guardrail_status" => "quarantined",
+        "score_version" => 1
+      })
+
+      assert {:ok, report} = MillionSend.Deliverability.get(c)
+      assert report.score == nil
+      assert report.band == nil
+      assert report.content_score == nil
+      assert report.outcome_score == nil
+      assert report.insufficient_outcome_data == true
+      assert report.guardrail_status == "quarantined"
+    end
   end
 
   describe "batch" do

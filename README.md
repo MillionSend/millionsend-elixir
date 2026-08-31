@@ -11,7 +11,7 @@ find-and-replace: swap the module prefix and point `base_url` at your instance.
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.2"}]
+  [{:millionsend, "~> 0.3"}]
 end
 ```
 
@@ -98,7 +98,8 @@ it if you prefer to bubble failures up.
 ```elixir
 MillionSend.Emails.send(payload)                             # POST /emails
 MillionSend.Emails.send(payload, idempotency_key: key)       # with idempotency
-MillionSend.Emails.get(id)                                   # GET /emails/:id
+MillionSend.Emails.get(id)                                   # GET /emails/:id (includes score)
+MillionSend.Emails.get_insights(id)                          # GET /emails/:id/insights
 MillionSend.Emails.cancel(id)                                # POST /emails/:id/cancel (scheduled only)
 MillionSend.Emails.send_batch([a, b], idempotency_key: key)  # POST /emails/batch (up to 100)
 ```
@@ -163,6 +164,25 @@ MillionSend.Segments.get(id)   # includes a live contact_count
 MillionSend.Segments.list()
 MillionSend.Segments.update(id, %{name: "Pro tier"})
 MillionSend.Segments.remove(id)
+```
+
+### Deliverability (MillionSend extension)
+
+Deliverability scores are 0–10 with one decimal. `MillionSend.Emails.get/2`
+returns the email's `score` (`nil` when no insights exist);
+`get_insights/2` returns the full per-email report (a `"not_found"` error until
+insights exist); `MillionSend.Deliverability.get/1` returns the account-level
+score over the trailing window (`nil` scores until there is enough data).
+
+```elixir
+{:ok, insights} = MillionSend.Emails.get_insights(id)  # GET /emails/:id/insights
+insights.score          # 8.5
+insights.band           # "excellent" | "good" | "needs_attention" | "at_risk"
+insights.checks         # [%MillionSend.Emails.Insights.Check{id: ..., severity: ..., status: ..., penalty: ..., detail: ...}]
+
+{:ok, report} = MillionSend.Deliverability.get()       # GET /deliverability
+report.score            # 8.7 (nil until enough data)
+report.guardrail_status # "ok" | "warning" | "paused"
 ```
 
 ## Migrating from Resend

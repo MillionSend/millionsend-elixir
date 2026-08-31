@@ -14,7 +14,37 @@ defmodule MillionSend.Emails.Email do
     :created_at,
     :scheduled_at,
     :message_id,
-    :last_event
+    :last_event,
+    :score
+  ]
+end
+
+defmodule MillionSend.Emails.Insights.Check do
+  @moduledoc """
+  One best-practice check from an insights report. `id` is an open set (the
+  catalog grows across score versions), and `severity`/`status` are plain
+  strings so future wire values never break decoding. `detail` is free-form
+  JSON (a map) or `nil`.
+  """
+  defstruct [:id, :severity, :status, :penalty, :detail]
+end
+
+defmodule MillionSend.Emails.Insights do
+  @moduledoc """
+  The pre-send best-practice report computed when an email was sent. `score`
+  is 0–10 (one decimal); `band` is a plain string
+  (`"excellent" | "good" | "needs_attention" | "at_risk"`, open to future values).
+  """
+  defstruct [
+    :object,
+    :email_id,
+    :score,
+    :score_version,
+    :band,
+    :marketing,
+    :html_size_bytes,
+    :computed_at,
+    checks: []
   ]
 end
 
@@ -37,7 +67,7 @@ defmodule MillionSend.Emails do
   import Kernel, except: [send: 2]
 
   alias MillionSend.{Client, Request}
-  alias MillionSend.Emails.Email
+  alias MillionSend.Emails.{Email, Insights}
 
   @fields [:from, :to, :subject, :html, :text, :cc, :bcc, :reply_to, :scheduled_at, :tags]
 
@@ -93,6 +123,33 @@ defmodule MillionSend.Emails do
   @spec get(Client.t(), String.t()) :: {:ok, Email.t()} | {:error, MillionSend.Error.t()}
   def get(client \\ MillionSend.client(), id) when is_binary(id) do
     Request.run(client, method: :get, path: "/emails/" <> Request.encode(id), as: Email)
+  end
+
+  @doc """
+  `GET /emails/:id/insights` — the email's deliverability insights report.
+  Returns a `"not_found"` error until insights exist for the email.
+  """
+  @spec get_insights(Client.t(), String.t()) ::
+          {:ok, Insights.t()} | {:error, MillionSend.Error.t()}
+  def get_insights(client \\ MillionSend.client(), id) when is_binary(id) do
+    with {:ok, %Insights{} = insights} <-
+           Request.run(client,
+             method: :get,
+             path: "/emails/" <> Request.encode(id) <> "/insights",
+             as: Insights
+           ) do
+      {:ok, %{insights | checks: Enum.map(insights.checks || [], &cast_check/1)}}
+    end
+  end
+
+  defp cast_check(check) when is_map(check) do
+    %Insights.Check{
+      id: check["id"],
+      severity: check["severity"],
+      status: check["status"],
+      penalty: check["penalty"],
+      detail: check["detail"]
+    }
   end
 
   @doc "`POST /emails/:id/cancel` — only scheduled, unsent emails."
