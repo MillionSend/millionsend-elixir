@@ -4,7 +4,7 @@ defmodule MillionSend.Client do
   module to run requests through. Build one with `MillionSend.client/1`.
   """
 
-  @default_base_url "http://localhost:3001"
+  @default_base_url "https://api.millionsend.com"
   @version Mix.Project.config()[:version]
   @user_agent "millionsend-elixir/#{@version}"
 

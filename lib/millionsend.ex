@@ -4,16 +4,15 @@ defmodule MillionSend do
   a self-hostable, Resend-compatible email API.
 
   The API is wire-compatible with Resend and this SDK mirrors `resend-elixir`, so
-  migrating is mostly a find-and-replace: swap the module prefix and point
-  `base_url` at your instance.
+  migrating is mostly a find-and-replace: swap the module prefix (and, when
+  self-hosting, point `base_url` at your instance).
 
   ## Configuration
 
   Configure a default client via application env:
 
       config :millionsend, MillionSend.Client,
-        api_key: System.get_env("MILLIONSEND_API_KEY"),
-        base_url: "https://mail.acme.dev"
+        api_key: System.get_env("MILLIONSEND_API_KEY")
 
   Every resource function then works without an explicit client:
 
@@ -30,8 +29,9 @@ defmodule MillionSend do
       {:ok, email} = MillionSend.Emails.send(client, %{...})
 
   `api_key`/`base_url` also fall back to the `MILLIONSEND_API_KEY` and
-  `MILLIONSEND_BASE_URL` environment variables. MillionSend is self-hosted, so
-  `base_url` defaults to `http://localhost:3001` — set it to your deployment.
+  `MILLIONSEND_BASE_URL` environment variables. `base_url` defaults to
+  MillionSend Cloud (`https://api.millionsend.com`); a self-hosted instance sets
+  its own origin.
 
   ## Return values
 

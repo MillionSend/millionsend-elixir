@@ -1,8 +1,8 @@
 # End-to-end smoke test against a real MillionSend instance. Opt-in: only
-# compiled and run when MILLIONSEND_API_KEY is set (and, if not localhost:3001,
-# MILLIONSEND_BASE_URL). It exercises the contact lifecycle, which needs no
-# verified domain. Sending is not asserted here — that requires a verified
-# sender domain.
+# compiled and run when MILLIONSEND_API_KEY is set (and MILLIONSEND_BASE_URL
+# when the target is not MillionSend Cloud). It exercises the contact
+# lifecycle, which needs no verified domain. Sending is not asserted here —
+# that requires a verified sender domain.
 #
 #   MILLIONSEND_API_KEY=ms_... MILLIONSEND_BASE_URL=http://localhost:3001 mix test
 if System.get_env("MILLIONSEND_API_KEY") do

@@ -28,6 +28,17 @@ defmodule MillionSend.ClientTest do
       System.delete_env("MILLIONSEND_BASE_URL")
     end
 
+    test "defaults the base url to MillionSend Cloud; the option still wins" do
+      prev = System.get_env("MILLIONSEND_BASE_URL")
+      System.delete_env("MILLIONSEND_BASE_URL")
+      on_exit(fn -> if prev, do: System.put_env("MILLIONSEND_BASE_URL", prev) end)
+
+      assert MillionSend.client(api_key: "k").base_url == "https://api.millionsend.com"
+
+      assert MillionSend.client(api_key: "k", base_url: "https://mail.example").base_url ==
+               "https://mail.example"
+    end
+
     test "refuses a non-loopback http base url unless allow_insecure_http is set" do
       assert_raise ArgumentError, ~r/allow_insecure_http/, fn ->
         MillionSend.client(api_key: "k", base_url: "http://mail.example.com")
@@ -173,6 +184,23 @@ defmodule MillionSend.ClientTest do
 
       assert %MillionSend.Error{status_code: 422, name: "validation_error", message: "bad"} =
                error
+    end
+
+    test "parses the 422 all_recipients_suppressed name" do
+      stub_response(422, %{
+        "statusCode" => 422,
+        "name" => "all_recipients_suppressed",
+        "message" => "All recipients are suppressed"
+      })
+
+      assert {:error, %MillionSend.Error{status_code: 422, name: "all_recipients_suppressed"}} =
+               MillionSend.Emails.send(client(), %{
+                 from: "a@x.dev",
+                 to: "b@x.dev",
+                 subject: "s",
+                 text: "t",
+                 topic_id: "t1"
+               })
     end
 
     test "surfaces a transport failure as status_code nil" do

@@ -491,6 +491,55 @@ defmodule MillionSend.ResourcesTest do
       assert req_query() == "after=cur"
     end
 
+    test "list_topics gets /contacts/:email/topics and casts the subscriptions", %{client: c} do
+      stub_json(%{
+        "object" => "list",
+        "has_more" => false,
+        "data" => [
+          %{
+            "id" => "t1",
+            "name" => "Insights",
+            "description" => nil,
+            "subscription" => "opt_in",
+            "explicit" => true
+          },
+          %{
+            "id" => "t2",
+            "name" => "Digest",
+            "description" => "Monthly",
+            "subscription" => "opt_out",
+            "explicit" => false
+          }
+        ]
+      })
+
+      assert {:ok, %MillionSend.List{has_more: false, data: topics}} =
+               MillionSend.Contacts.list_topics(c, %{email: "c@x.dev"})
+
+      assert req_method() == :get and req_path() == "/contacts/c%40x.dev/topics"
+      assert req_body() == nil
+
+      assert topics == [
+               %MillionSend.Contacts.TopicSubscription{
+                 id: "t1",
+                 name: "Insights",
+                 description: nil,
+                 subscription: "opt_in",
+                 explicit: true
+               },
+               %MillionSend.Contacts.TopicSubscription{
+                 id: "t2",
+                 name: "Digest",
+                 description: "Monthly",
+                 subscription: "opt_out",
+                 explicit: false
+               }
+             ]
+
+      assert {:ok, _} = MillionSend.Contacts.list_topics(c, "c1")
+      assert req_path() == "/contacts/c1/topics"
+    end
+
     test "update_topics patches /contacts/:id/topics with the bare array", %{client: c} do
       stub_json(%{"id" => "c1"})
 

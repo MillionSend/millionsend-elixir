@@ -18,6 +18,17 @@ defmodule MillionSend.Contacts.Contact do
   ]
 end
 
+defmodule MillionSend.Contacts.TopicSubscription do
+  @moduledoc """
+  A contact's effective subscription to one topic, as returned by
+  `MillionSend.Contacts.list_topics/2`. `subscription` is `"opt_in"` or
+  `"opt_out"`; `explicit` is `false` when that is the topic's default rather
+  than the contact's own choice.
+  """
+  @type t :: %__MODULE__{}
+  defstruct [:id, :name, :description, :subscription, :explicit]
+end
+
 defmodule MillionSend.Contacts.BatchResponse do
   @moduledoc """
   The result of `MillionSend.Contacts.create_batch/3`: one `Item` per
@@ -66,7 +77,7 @@ defmodule MillionSend.Contacts do
   """
 
   alias MillionSend.{Client, Request}
-  alias MillionSend.Contacts.{BatchResponse, Contact}
+  alias MillionSend.Contacts.{BatchResponse, Contact, TopicSubscription}
 
   @type address :: String.t() | map()
 
@@ -151,6 +162,21 @@ defmodule MillionSend.Contacts do
       path: "/contacts",
       query: Request.list_query(opts),
       as: {:list, Contact}
+    )
+  end
+
+  @doc """
+  `GET /contacts/:id_or_email/topics` — every topic with the contact's effective
+  `subscription` (`"opt_in" | "opt_out"`) and whether it is `explicit` or the
+  topic's default. Returns a `MillionSend.List` of `TopicSubscription`s.
+  """
+  @spec list_topics(Client.t(), address()) ::
+          {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
+  def list_topics(client \\ MillionSend.client(), address) do
+    Request.run(client,
+      method: :get,
+      path: member_path(address) <> "/topics",
+      as: {:list, TopicSubscription}
     )
   end
 

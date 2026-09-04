@@ -4,14 +4,15 @@ Official Elixir SDK for [MillionSend](https://github.com/MillionSend/millionsend
 
 The API is wire-compatible with Resend, and this SDK mirrors the shape of
 [`resend-elixir`](https://hex.pm/packages/resend), so migrating is mostly a
-find-and-replace: swap the module prefix and point `base_url` at your instance.
+find-and-replace: swap the module prefix (and, if you self-host, point `base_url`
+at your instance).
 
 ## Install
 
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.4"}]
+  [{:millionsend, "~> 0.5"}]
 end
 ```
 
@@ -21,8 +22,8 @@ Requires Elixir 1.15+. HTTP is handled by [Req](https://hex.pm/packages/req).
 
 ```elixir
 config :millionsend, MillionSend.Client,
-  api_key: System.get_env("MILLIONSEND_API_KEY"),
-  base_url: "https://mail.acme.dev"
+  api_key: System.get_env("MILLIONSEND_API_KEY")
+# Self-hosting? Add base_url: "https://mail.acme.dev" to point at your instance.
 ```
 
 ```elixir
@@ -59,8 +60,8 @@ Resolution precedence for each option: explicit `MillionSend.client/1` opts →
 (`MILLIONSEND_API_KEY`, `MILLIONSEND_BASE_URL`) → defaults.
 
 - `api_key` is required; missing everywhere raises `ArgumentError`.
-- `base_url` defaults to `http://localhost:3001`. MillionSend is self-hosted, so
-  **set this to your deployment in production.**
+- `base_url` defaults to MillionSend Cloud (`https://api.millionsend.com`), so
+  Cloud works with just the key. A self-hosted instance sets its own origin here.
 - `allow_insecure_http` (optional, default `false`). Plain `http://` is only accepted
   for loopback hosts (`localhost`, `127.0.0.1`, `::1`); any other `http://` URL raises
   `ArgumentError`, since the API key is sent as a bearer header. Set it to `true` to
@@ -86,7 +87,9 @@ No function raises for an API error — each returns `{:ok, struct}` or
 `{:error, %MillionSend.Error{}}`. The error's `name` is a stable snake_case code
 you can match on (`"validation_error"`, `"not_found"`, `"restricted_api_key"`,
 `"sending_paused"`, …). Client-side and transport failures carry
-`status_code: nil`.
+`status_code: nil`. `Emails.send/2` and `send_batch/2` answer a 422
+`"all_recipients_suppressed"` when every `to` recipient is on the suppression
+list or opted out of the send's `topic_id`.
 
 ```elixir
 case MillionSend.Emails.get(id) do
@@ -172,6 +175,9 @@ MillionSend.Contacts.remove_from_segment(contact_id, segment_id)
 # Topic subscriptions (granular unsubscribe)
 MillionSend.Contacts.update_topics(%{email: "ada@acme.dev",
                                      topics: [%{id: topic_id, subscription: :opt_out}]})
+{:ok, %MillionSend.List{data: topics}} = MillionSend.Contacts.list_topics(%{email: "ada@acme.dev"})
+topics  # [%MillionSend.Contacts.TopicSubscription{id: ..., name: ..., subscription: "opt_out", explicit: true}, ...]
+        # explicit: false means the contact inherits the topic's default_subscription
 ```
 
 ### Contact properties
@@ -334,7 +340,7 @@ usage.today["emails_sent"]
 
 ```diff
 - config :resend, api_key: "re_123"
-+ config :millionsend, MillionSend.Client, api_key: "ms_123", base_url: "https://mail.acme.dev"
++ config :millionsend, MillionSend.Client, api_key: "ms_123"   # self-hosted: add base_url: "https://mail.acme.dev"
 ```
 
 Module names, function names and payloads match. Notes:
@@ -349,7 +355,7 @@ Module names, function names and payloads match. Notes:
 ## Testing against a real instance
 
 The suite is fully mocked. An opt-in end-to-end test runs only when
-`MILLIONSEND_API_KEY` is set (and `MILLIONSEND_BASE_URL` if not localhost):
+`MILLIONSEND_API_KEY` is set (and `MILLIONSEND_BASE_URL` for a self-hosted instance):
 
 ```bash
 MILLIONSEND_API_KEY=ms_... MILLIONSEND_BASE_URL=http://localhost:3001 mix test
