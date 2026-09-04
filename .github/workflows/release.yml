@@ -4,6 +4,8 @@ name: release
 # HEX_API_KEY repository secret (hex.pm → dashboard → keys, write scope).
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -13,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # A tag publishes exactly the version the manifest declares; a tag that
+      # disagrees with it is refused instead of shipping the wrong number.
+      - name: Tag must match the manifest version
+        if: github.ref_type == 'tag'
+        run: test "v$(sed -n 's/.*@version "\(.*\)"/\1/p' mix.exs)" = "$GITHUB_REF_NAME"
       - uses: erlef/setup-beam@0f75c29430f34bb5af4cce5e3b7f6a8860fca236 # v1
         with:
           elixir-version: "1.16"
