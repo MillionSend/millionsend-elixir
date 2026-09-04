@@ -23,10 +23,22 @@ defmodule MillionSend.Contacts.TopicSubscription do
   A contact's effective subscription to one topic, as returned by
   `MillionSend.Contacts.list_topics/2`. `subscription` is `"opt_in"` or
   `"opt_out"`; `explicit` is `false` when that is the topic's default rather
-  than the contact's own choice.
+  than the contact's own choice; `visibility` is `"public"` or `"private"` (the
+  hosted preference page lists public topics only).
   """
   @type t :: %__MODULE__{}
-  defstruct [:id, :name, :description, :subscription, :explicit]
+  defstruct [:id, :name, :description, :subscription, :explicit, :visibility]
+end
+
+defmodule MillionSend.Contacts.PreferencesLink do
+  @moduledoc """
+  A contact's hosted preference-page URL, as returned by
+  `MillionSend.Contacts.preferences_link/2`. `contact` is the contact id. The
+  link is a signed, contact-scoped capability with no expiry: anyone holding it
+  can change that contact's preferences, so hand it only to the contact.
+  """
+  @type t :: %__MODULE__{}
+  defstruct [:object, :contact, :url]
 end
 
 defmodule MillionSend.Contacts.BatchResponse do
@@ -74,10 +86,12 @@ defmodule MillionSend.Contacts do
       MillionSend.Contacts.get(%{email: "ada@acme.dev"})
       MillionSend.Contacts.get("contact-uuid")
       MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil}) # nil clears
+      MillionSend.Contacts.batch_remove(%{emails: ["ada@acme.dev"]})
+      MillionSend.Contacts.preferences_link(%{email: "ada@acme.dev"})
   """
 
   alias MillionSend.{Client, Request}
-  alias MillionSend.Contacts.{BatchResponse, Contact, TopicSubscription}
+  alias MillionSend.Contacts.{BatchResponse, Contact, PreferencesLink, TopicSubscription}
 
   @type address :: String.t() | map()
 
@@ -121,6 +135,21 @@ defmodule MillionSend.Contacts do
       body: list,
       batch_validation: opts[:batch_validation],
       as: &BatchResponse.cast/1
+    )
+  end
+
+  @doc """
+  `POST /contacts/batch/remove` — delete by `%{emails: [...]}` or `%{ids: [...]}`
+  (up to 1000). Returns only the contacts actually deleted, each with `contact`
+  (its id) and `deleted: true`; unknown ids or addresses are skipped.
+  """
+  @spec batch_remove(Client.t(), map()) :: {:ok, [Contact.t()]} | {:error, MillionSend.Error.t()}
+  def batch_remove(client \\ MillionSend.client(), params) when is_map(params) do
+    Request.run(client,
+      method: :post,
+      path: "/contacts/batch/remove",
+      body: params,
+      as: {:data, Contact}
     )
   end
 
@@ -194,6 +223,22 @@ defmodule MillionSend.Contacts do
       path: member_path(params) <> "/topics",
       body: topics,
       as: Contact
+    )
+  end
+
+  @doc """
+  `POST /contacts/:id_or_email/preferences-link` — the contact's hosted
+  preferences URL (the page their unsubscribe links open), for deep-linking from
+  a settings screen. A 422 `validation_error` when the instance cannot mint
+  hosted links; `not_found` for an unknown contact.
+  """
+  @spec preferences_link(Client.t(), address()) ::
+          {:ok, PreferencesLink.t()} | {:error, MillionSend.Error.t()}
+  def preferences_link(client \\ MillionSend.client(), address) do
+    Request.run(client,
+      method: :post,
+      path: member_path(address) <> "/preferences-link",
+      as: PreferencesLink
     )
   end
 

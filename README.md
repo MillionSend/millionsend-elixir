@@ -12,7 +12,7 @@ at your instance).
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.5"}]
+  [{:millionsend, "~> 0.6"}]
 end
 ```
 
@@ -159,6 +159,7 @@ MillionSend.Contacts.get("contact-uuid")               # bare id works too
 MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil})  # nil clears
 MillionSend.Contacts.remove(%{email: "ada@acme.dev"})
 MillionSend.Contacts.list(limit: 50, after: cursor)
+MillionSend.Contacts.batch_remove(%{emails: ["a@acme.dev"]})   # or %{ids: [...]}; up to 1000
 
 # Bulk create (up to 1000). on_conflict: :error (default) | :skip | :upsert;
 # batch_validation: :strict (default) | :permissive.
@@ -178,6 +179,10 @@ MillionSend.Contacts.update_topics(%{email: "ada@acme.dev",
 {:ok, %MillionSend.List{data: topics}} = MillionSend.Contacts.list_topics(%{email: "ada@acme.dev"})
 topics  # [%MillionSend.Contacts.TopicSubscription{id: ..., name: ..., subscription: "opt_out", explicit: true}, ...]
         # explicit: false means the contact inherits the topic's default_subscription
+
+# Hosted preference page (the one the contact's unsubscribe links open)
+{:ok, link} = MillionSend.Contacts.preferences_link(%{email: "ada@acme.dev"})
+link.url   # signed, contact-scoped, no expiry — hand it only to the contact
 ```
 
 ### Contact properties
@@ -283,10 +288,21 @@ MillionSend.ApiKeys.remove(id)
 })
 hook.signing_secret
 MillionSend.Webhooks.list()
-MillionSend.Webhooks.get(id)                 # includes signing_secret
+MillionSend.Webhooks.get(id)                 # includes signing_secret and previous_secret_expires_at
 MillionSend.Webhooks.update(id, %{status: :disabled})
 MillionSend.Webhooks.remove(id)
+
+# Rotate the signing secret. For overlap_hours (0..72) deliveries carry both
+# signatures, so the receiver can switch without a gap. Pass signing_secret:
+# to install your own whsec_ value instead of a minted one.
+{:ok, rotated} = MillionSend.Webhooks.rotate(id, overlap_hours: 24)
+rotated.signing_secret
+rotated.previous_secret_expires_at           # nil when overlap_hours: 0
 ```
+
+Events include `email.*`, `deliverability.*`, `quota.*`, `contact.*`
+(`created`, `updated`, `deleted`, `unsubscribed`, `resubscribed`,
+`topic_opt_in`, `topic_opt_out`) and `suppression.*` (`added`, `removed`).
 
 ### Templates
 

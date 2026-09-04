@@ -1,10 +1,23 @@
 defmodule MillionSend.Webhooks.Webhook do
   @moduledoc """
-  A webhook endpoint. `signing_secret` is returned by `create/2` and `get/2`;
-  `status` is `"enabled" | "disabled"`. `remove/2` populates `id` plus `deleted`.
+  A webhook endpoint. `signing_secret` is returned by `create/2`, `get/2` and
+  `rotate/3`; `status` is `"enabled" | "disabled"`. `previous_secret_expires_at`
+  (`get/2`, `rotate/3`) is the ISO instant until which deliveries are also
+  signed with the secret the current one replaced, `nil` outside a rotation's
+  overlap window. `remove/2` populates `id` plus `deleted`.
   """
   @type t :: %__MODULE__{}
-  defstruct [:object, :id, :endpoint, :events, :status, :signing_secret, :created_at, :deleted]
+  defstruct [
+    :object,
+    :id,
+    :endpoint,
+    :events,
+    :status,
+    :signing_secret,
+    :previous_secret_expires_at,
+    :created_at,
+    :deleted
+  ]
 end
 
 defmodule MillionSend.Webhooks do
@@ -18,6 +31,12 @@ defmodule MillionSend.Webhooks do
         endpoint: "https://acme.dev/hooks/email",
         events: ["email.delivered", "email.bounced"]
       })
+
+  Subscribable events: `email.*` (`sent`, `delivered`, `delivery_delayed`,
+  `bounced`, `complained`, `opened`, `clicked`), `deliverability.*` (`warning`,
+  `paused`), `quota.*` (`warning`, `reached`, `paused`), `contact.*` (`created`,
+  `updated`, `deleted`, `unsubscribed`, `resubscribed`, `topic_opt_in`,
+  `topic_opt_out`) and `suppression.*` (`added`, `removed`).
   """
 
   alias MillionSend.{Client, Request}
@@ -58,6 +77,38 @@ defmodule MillionSend.Webhooks do
           {:ok, Webhook.t()} | {:error, MillionSend.Error.t()}
   def update(client \\ MillionSend.client(), id, params) when is_binary(id) and is_map(params) do
     Request.run(client, method: :patch, path: member_path(id), body: params, as: Webhook)
+  end
+
+  @doc """
+  `POST /webhooks/:id/rotate` — mint a new signing secret (or install the
+  `signing_secret:` given, a `whsec_` value). For `overlap_hours:` (0..72) the
+  previous secret keeps signing too: every delivery in that window carries both
+  signatures, so the receiver can switch at any point without a gap. Both
+  options are optional; the response carries the new `signing_secret` and
+  `previous_secret_expires_at`.
+
+      MillionSend.Webhooks.rotate(id)
+      MillionSend.Webhooks.rotate(id, overlap_hours: 24)
+  """
+  @spec rotate(String.t()) :: {:ok, Webhook.t()} | {:error, MillionSend.Error.t()}
+  def rotate(id) when is_binary(id), do: rotate(MillionSend.client(), id, [])
+
+  @spec rotate(Client.t() | String.t(), String.t() | keyword()) ::
+          {:ok, Webhook.t()} | {:error, MillionSend.Error.t()}
+  def rotate(%Client{} = client, id) when is_binary(id), do: rotate(client, id, [])
+
+  def rotate(id, opts) when is_binary(id) and is_list(opts),
+    do: rotate(MillionSend.client(), id, opts)
+
+  @spec rotate(Client.t(), String.t(), keyword()) ::
+          {:ok, Webhook.t()} | {:error, MillionSend.Error.t()}
+  def rotate(%Client{} = client, id, opts) when is_binary(id) and is_list(opts) do
+    Request.run(client,
+      method: :post,
+      path: member_path(id) <> "/rotate",
+      body: Map.new(opts),
+      as: Webhook
+    )
   end
 
   @doc "`DELETE /webhooks/:id`"

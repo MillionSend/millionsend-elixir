@@ -501,14 +501,16 @@ defmodule MillionSend.ResourcesTest do
             "name" => "Insights",
             "description" => nil,
             "subscription" => "opt_in",
-            "explicit" => true
+            "explicit" => true,
+            "visibility" => "public"
           },
           %{
             "id" => "t2",
             "name" => "Digest",
             "description" => "Monthly",
             "subscription" => "opt_out",
-            "explicit" => false
+            "explicit" => false,
+            "visibility" => "private"
           }
         ]
       })
@@ -525,14 +527,16 @@ defmodule MillionSend.ResourcesTest do
                  name: "Insights",
                  description: nil,
                  subscription: "opt_in",
-                 explicit: true
+                 explicit: true,
+                 visibility: "public"
                },
                %MillionSend.Contacts.TopicSubscription{
                  id: "t2",
                  name: "Digest",
                  description: "Monthly",
                  subscription: "opt_out",
-                 explicit: false
+                 explicit: false,
+                 visibility: "private"
                }
              ]
 
@@ -564,6 +568,49 @@ defmodule MillionSend.ResourcesTest do
                MillionSend.Contacts.remove_from_segment(c, "c1", "s1")
 
       assert req_method() == :delete and req_path() == "/contacts/c1/segments/s1"
+    end
+
+    test "batch_remove posts ids or emails and casts the deleted rows", %{client: c} do
+      stub_json(%{"data" => [%{"object" => "contact", "contact" => "c1", "deleted" => true}]})
+
+      assert {:ok, [%MillionSend.Contacts.Contact{contact: "c1", deleted: true}]} =
+               MillionSend.Contacts.batch_remove(c, %{emails: ["a@x.dev", "b@x.dev"]})
+
+      assert req_method() == :post and req_path() == "/contacts/batch/remove"
+      assert req_body() == %{"emails" => ["a@x.dev", "b@x.dev"]}
+
+      assert {:ok, _} = MillionSend.Contacts.batch_remove(c, %{ids: ["c1", "c2"]})
+      assert req_body() == %{"ids" => ["c1", "c2"]}
+    end
+
+    test "preferences_link posts to /contacts/:id_or_email/preferences-link", %{client: c} do
+      stub_json(%{
+        "object" => "preferences_link",
+        "contact" => "c1",
+        "url" => "https://app.test/p/tok"
+      })
+
+      assert {:ok,
+              %MillionSend.Contacts.PreferencesLink{
+                object: "preferences_link",
+                contact: "c1",
+                url: "https://app.test/p/tok"
+              }} = MillionSend.Contacts.preferences_link(c, %{email: "c@x.dev"})
+
+      assert req_method() == :post and req_path() == "/contacts/c%40x.dev/preferences-link"
+      assert req_body() == nil
+
+      assert {:ok, _} = MillionSend.Contacts.preferences_link(c, "c1")
+      assert req_path() == "/contacts/c1/preferences-link"
+
+      stub_response(422, %{
+        "statusCode" => 422,
+        "name" => "validation_error",
+        "message" => "APP_BASE_URL and MASTER_ENCRYPTION_KEY must be set to mint preference links"
+      })
+
+      assert {:error, %MillionSend.Error{name: "validation_error", status_code: 422}} =
+               MillionSend.Contacts.preferences_link(c, "c1")
     end
   end
 
@@ -954,11 +1001,16 @@ defmodule MillionSend.ResourcesTest do
         "endpoint" => "https://acme.dev/hook",
         "events" => ["email.delivered"],
         "status" => "enabled",
-        "signing_secret" => "whsec_abc"
+        "signing_secret" => "whsec_abc",
+        "previous_secret_expires_at" => nil
       })
 
-      assert {:ok, %MillionSend.Webhooks.Webhook{status: "enabled", signing_secret: "whsec_abc"}} =
-               MillionSend.Webhooks.get(c, "w1")
+      assert {:ok,
+              %MillionSend.Webhooks.Webhook{
+                status: "enabled",
+                signing_secret: "whsec_abc",
+                previous_secret_expires_at: nil
+              }} = MillionSend.Webhooks.get(c, "w1")
 
       assert req_method() == :get and req_path() == "/webhooks/w1"
 
@@ -974,6 +1026,34 @@ defmodule MillionSend.ResourcesTest do
                MillionSend.Webhooks.remove(c, "w1")
 
       assert req_method() == :delete and req_path() == "/webhooks/w1"
+    end
+
+    test "rotate posts an empty object by default, or the given options", %{client: c} do
+      stub_json(%{
+        "object" => "webhook",
+        "id" => "w1",
+        "signing_secret" => "whsec_new",
+        "previous_secret_expires_at" => "2026-01-02T00:00:00.000Z"
+      })
+
+      assert {:ok,
+              %MillionSend.Webhooks.Webhook{
+                id: "w1",
+                signing_secret: "whsec_new",
+                previous_secret_expires_at: "2026-01-02T00:00:00.000Z"
+              }} = MillionSend.Webhooks.rotate(c, "w1")
+
+      assert req_method() == :post and req_path() == "/webhooks/w1/rotate"
+      assert req_headers()["content-type"] == "application/json"
+      assert req_body() == %{}
+
+      assert {:ok, _} =
+               MillionSend.Webhooks.rotate(c, "w1",
+                 signing_secret: "whsec_mine",
+                 overlap_hours: 0
+               )
+
+      assert req_body() == %{"signing_secret" => "whsec_mine", "overlap_hours" => 0}
     end
   end
 
