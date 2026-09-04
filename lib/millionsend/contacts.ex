@@ -1,5 +1,9 @@
 defmodule MillionSend.Contacts.Contact do
-  @moduledoc "A contact. `remove/2` populates `contact` (its id) plus `deleted`."
+  @moduledoc """
+  A contact. `remove/2` populates `contact` (its id) plus `deleted`.
+  `properties` is a map of `key => %{"type" => "string" | "number", "value" => ...}`.
+  """
+  @type t :: %__MODULE__{}
   defstruct [
     :object,
     :id,
@@ -14,10 +18,46 @@ defmodule MillionSend.Contacts.Contact do
   ]
 end
 
+defmodule MillionSend.Contacts.BatchResponse do
+  @moduledoc """
+  The result of `MillionSend.Contacts.create_batch/3`: one `Item` per
+  successful request item (in request order), per-status `counts`
+  (`created`/`updated`/`skipped`/`failed`, summing to the request length) and,
+  in permissive mode, the failed items as `errors`.
+  """
+
+  defmodule Item do
+    @moduledoc "An accepted batch item: its request `index`, the contact `id` and `status` (`\"created\" | \"updated\" | \"skipped\"`)."
+    @type t :: %__MODULE__{}
+    defstruct [:object, :index, :id, :status]
+  end
+
+  alias MillionSend.{BatchError, Request}
+
+  @type t :: %__MODULE__{data: [Item.t()], counts: map(), errors: [BatchError.t()]}
+  defstruct data: [], counts: %{created: 0, updated: 0, skipped: 0, failed: 0}, errors: []
+
+  @doc false
+  def cast(map) do
+    counts = map["counts"] || %{}
+
+    %__MODULE__{
+      data: Enum.map(map["data"] || [], &Request.cast_struct(Item, &1)),
+      counts: Map.new([:created, :updated, :skipped, :failed], &{&1, counts[to_string(&1)] || 0}),
+      errors: BatchError.cast_list(map["errors"])
+    }
+  end
+end
+
 defmodule MillionSend.Contacts do
   @moduledoc """
   Contacts are team-global (one per email per team, case-insensitive) and
   addressable by id **or** email — email wins when both are given.
+
+  Input maps are sent as given: `create/2` accepts `email`, `first_name`,
+  `last_name`, `unsubscribed`, `properties`, `segments` (`[%{id: ...}]`) and
+  `topics` (`[%{id: ..., subscription: ...}]`); `update/2` accepts `first_name`,
+  `last_name`, `unsubscribed` and `properties`, where `nil` clears a field.
 
       MillionSend.Contacts.create(%{email: "ada@acme.dev", first_name: "Ada"})
       MillionSend.Contacts.get(%{email: "ada@acme.dev"})
@@ -26,12 +66,12 @@ defmodule MillionSend.Contacts do
   """
 
   alias MillionSend.{Client, Request}
-  alias MillionSend.Contacts.Contact
-
-  @create_fields [:email, :first_name, :last_name, :unsubscribed, :properties]
-  @update_fields [:first_name, :last_name, :unsubscribed, :properties]
+  alias MillionSend.Contacts.{BatchResponse, Contact}
 
   @type address :: String.t() | map()
+
+  # The address keys `update/2` reads from `params`; they are not body fields.
+  @address_keys [:id, :email, "id", "email"]
 
   @doc """
   `POST /contacts`. A duplicate email (per team, case-insensitive) is a 409
@@ -39,11 +79,37 @@ defmodule MillionSend.Contacts do
   """
   @spec create(Client.t(), map()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
   def create(client \\ MillionSend.client(), params) when is_map(params) do
+    Request.run(client, method: :post, path: "/contacts", body: params, as: Contact)
+  end
+
+  @doc """
+  `POST /contacts/batch` — 1..1000 `create/2` payloads in one call. Options:
+  `on_conflict:` (`:error`, the default, `:skip` or `:upsert`; sent as the query
+  parameter) and `batch_validation:` (`:strict`, the default, or `:permissive`;
+  sent as the `x-batch-validation` header). Returns a
+  `MillionSend.Contacts.BatchResponse`; only permissive mode fills `errors`.
+  """
+  @spec create_batch([map()]) :: {:ok, BatchResponse.t()} | {:error, MillionSend.Error.t()}
+  def create_batch(list) when is_list(list), do: create_batch(MillionSend.client(), list, [])
+
+  @spec create_batch(Client.t() | [map()], [map()] | keyword()) ::
+          {:ok, BatchResponse.t()} | {:error, MillionSend.Error.t()}
+  def create_batch(%Client{} = client, list) when is_list(list),
+    do: create_batch(client, list, [])
+
+  def create_batch(list, opts) when is_list(list) and is_list(opts),
+    do: create_batch(MillionSend.client(), list, opts)
+
+  @spec create_batch(Client.t(), [map()], keyword()) ::
+          {:ok, BatchResponse.t()} | {:error, MillionSend.Error.t()}
+  def create_batch(%Client{} = client, list, opts) when is_list(list) and is_list(opts) do
     Request.run(client,
       method: :post,
-      path: "/contacts",
-      body: Request.take(params, @create_fields),
-      as: Contact
+      path: "/contacts/batch",
+      query: [on_conflict: opts[:on_conflict]],
+      body: list,
+      batch_validation: opts[:batch_validation],
+      as: &BatchResponse.cast/1
     )
   end
 
@@ -59,7 +125,7 @@ defmodule MillionSend.Contacts do
     Request.run(client,
       method: :patch,
       path: member_path(params),
-      body: Request.take(params, @update_fields),
+      body: Map.drop(params, @address_keys),
       as: Contact
     )
   end
@@ -104,6 +170,25 @@ defmodule MillionSend.Contacts do
       as: Contact
     )
   end
+
+  @doc "`POST /contacts/:id_or_email/segments/:segment_id` — add the contact to a segment."
+  @spec add_to_segment(Client.t(), address(), String.t()) ::
+          {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
+  def add_to_segment(client \\ MillionSend.client(), address, segment_id)
+      when is_binary(segment_id) do
+    Request.run(client, method: :post, path: segment_path(address, segment_id), as: Contact)
+  end
+
+  @doc "`DELETE /contacts/:id_or_email/segments/:segment_id` — remove the contact from a segment."
+  @spec remove_from_segment(Client.t(), address(), String.t()) ::
+          {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
+  def remove_from_segment(client \\ MillionSend.client(), address, segment_id)
+      when is_binary(segment_id) do
+    Request.run(client, method: :delete, path: segment_path(address, segment_id), as: Contact)
+  end
+
+  defp segment_path(address, segment_id),
+    do: member_path(address) <> "/segments/" <> Request.encode(segment_id)
 
   defp member_path(address), do: "/contacts/" <> member_key(normalize(address))
 

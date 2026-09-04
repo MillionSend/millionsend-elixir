@@ -1,12 +1,15 @@
 defmodule MillionSend.Segments.Segment do
   @moduledoc "A dynamic segment — a saved filter over the team's contacts."
+  @type t :: %__MODULE__{}
   defstruct [:object, :id, :name, :filter, :created_at, :contact_count, :deleted]
 end
 
 defmodule MillionSend.Segments do
   @moduledoc """
-  Dynamic segments — a saved filter over the team's contacts. A MillionSend
-  extension with no Resend equivalent. `get/2` returns a live `contact_count`.
+  Segments — a saved `filter` over the team's contacts (dynamic, a MillionSend
+  extension over Resend's static segments); a segment without a filter is a
+  plain list contacts are added to explicitly. `get/2` returns a live
+  `contact_count`.
 
       MillionSend.Segments.create(%{
         name: "Pro plan",
@@ -15,17 +18,13 @@ defmodule MillionSend.Segments do
   """
 
   alias MillionSend.{Client, Request}
+  alias MillionSend.Contacts.Contact
   alias MillionSend.Segments.Segment
 
-  @doc "`POST /segments`"
+  @doc "`POST /segments` — `name:` plus an optional `filter:`."
   @spec create(Client.t(), map()) :: {:ok, Segment.t()} | {:error, MillionSend.Error.t()}
   def create(client \\ MillionSend.client(), params) when is_map(params) do
-    Request.run(client,
-      method: :post,
-      path: "/segments",
-      body: Request.take(params, [:name, :filter]),
-      as: Segment
-    )
+    Request.run(client, method: :post, path: "/segments", body: params, as: Segment)
   end
 
   @doc "`GET /segments/:id`"
@@ -52,6 +51,28 @@ defmodule MillionSend.Segments do
     )
   end
 
+  @doc "`GET /segments/:id/contacts` — the segment's members; accepts `limit:`, `after:`, `before:`."
+  @spec list_contacts(String.t()) :: {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
+  def list_contacts(id) when is_binary(id), do: list_contacts(MillionSend.client(), id, [])
+
+  @spec list_contacts(Client.t() | String.t(), String.t() | keyword()) ::
+          {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
+  def list_contacts(%Client{} = client, id) when is_binary(id), do: list_contacts(client, id, [])
+
+  def list_contacts(id, opts) when is_binary(id) and is_list(opts),
+    do: list_contacts(MillionSend.client(), id, opts)
+
+  @spec list_contacts(Client.t(), String.t(), keyword()) ::
+          {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
+  def list_contacts(%Client{} = client, id, opts) when is_binary(id) and is_list(opts) do
+    Request.run(client,
+      method: :get,
+      path: "/segments/" <> Request.encode(id) <> "/contacts",
+      query: Request.list_query(opts),
+      as: {:list, Contact}
+    )
+  end
+
   @doc "`PATCH /segments/:id`"
   @spec update(Client.t(), String.t(), map()) ::
           {:ok, Segment.t()} | {:error, MillionSend.Error.t()}
@@ -59,7 +80,7 @@ defmodule MillionSend.Segments do
     Request.run(client,
       method: :patch,
       path: "/segments/" <> Request.encode(id),
-      body: Request.take(params, [:name, :filter]),
+      body: params,
       as: Segment
     )
   end

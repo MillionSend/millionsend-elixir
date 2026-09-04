@@ -3,6 +3,10 @@ defmodule MillionSend.Request do
   # Internal request pipeline shared by every resource: builds the URL, headers
   # and JSON body, runs the request through the client's HTTP module, and casts
   # the response into `{:ok, struct}` / `{:error, %MillionSend.Error{}}`.
+  #
+  # Bodies are encoded exactly as given (atom or string keys, `nil` included):
+  # the API validates them and rejects what it does not accept, so the SDK never
+  # silently drops a field a caller wrote.
 
   alias MillionSend.{Client, Error}
 
@@ -12,33 +16,16 @@ defmodule MillionSend.Request do
     path = Keyword.fetch!(opts, :path)
     body = Keyword.get(opts, :body)
     query = Keyword.get(opts, :query)
-    idempotency_key = Keyword.get(opts, :idempotency_key)
     as = Keyword.get(opts, :as)
 
     url = client.base_url <> path <> encode_query(query)
     encoded = if is_nil(body), do: nil, else: Jason.encode!(body)
-    headers = headers(client, method, encoded, idempotency_key)
+    headers = headers(client, method, encoded, opts)
 
     case client.http_client.request(%{method: method, url: url, headers: headers, body: encoded}) do
       {:ok, %{status: status, body: raw}} -> handle(status, raw, as)
       {:error, reason} -> {:error, Error.transport(reason)}
     end
-  end
-
-  @doc """
-  Picks `keys` (atoms) that are present in `map`, preserving `nil` values so an
-  explicit `nil` still clears a field on PATCH; absent keys are dropped. Accepts
-  atom or string keys in the input.
-  """
-  @spec take(map(), [atom()]) :: map()
-  def take(map, keys) when is_map(map) do
-    Enum.reduce(keys, %{}, fn key, acc ->
-      cond do
-        Map.has_key?(map, key) -> Map.put(acc, key, Map.get(map, key))
-        Map.has_key?(map, to_string(key)) -> Map.put(acc, key, Map.get(map, to_string(key)))
-        true -> acc
-      end
-    end)
   end
 
   @doc "Percent-encodes a single path segment the way `encodeURIComponent` does."
@@ -48,6 +35,14 @@ defmodule MillionSend.Request do
   @doc false
   @spec list_query(keyword() | map()) :: keyword()
   def list_query(opts), do: [limit: opts[:limit], after: opts[:after], before: opts[:before]]
+
+  @doc false
+  @spec cast_struct(module(), map()) :: struct()
+  def cast_struct(module, map) when is_map(map) do
+    fields = module.__struct__() |> Map.from_struct() |> Map.keys()
+    data = for f <- fields, Map.has_key?(map, to_string(f)), into: %{}, do: {f, map[to_string(f)]}
+    struct(module, data)
+  end
 
   defp handle(status, raw, as) do
     parsed = decode(raw)
@@ -59,7 +54,7 @@ defmodule MillionSend.Request do
     end
   end
 
-  defp headers(client, method, encoded, idempotency_key) do
+  defp headers(client, method, encoded, opts) do
     base = [
       {"authorization", "Bearer " <> client.api_key},
       {"accept", "application/json"},
@@ -71,10 +66,18 @@ defmodule MillionSend.Request do
         do: [{"content-type", "application/json"} | base],
         else: base
 
-    # Idempotency is POST-only on the wire.
-    if idempotency_key && method == :post,
-      do: [{"idempotency-key", idempotency_key} | base],
-      else: base
+    # Idempotency and batch validation are POST-only on the wire.
+    if method == :post do
+      [
+        {"idempotency-key", opts[:idempotency_key]},
+        {"x-batch-validation", opts[:batch_validation]}
+      ]
+      |> Enum.reject(fn {_name, value} -> is_nil(value) end)
+      |> Enum.map(fn {name, value} -> {name, to_string(value)} end)
+      |> Kernel.++(base)
+    else
+      base
+    end
   end
 
   defp encode_query(nil), do: ""
@@ -115,14 +118,11 @@ defmodule MillionSend.Request do
     Enum.map(parsed["data"] || [], &cast_struct(module, &1))
   end
 
+  # Responses with nested typed shapes supply their own cast function.
+  defp cast(parsed, fun) when is_function(fun, 1) and is_map(parsed), do: fun.(parsed)
+
   defp cast(parsed, module) when is_atom(module) and is_map(parsed),
     do: cast_struct(module, parsed)
 
   defp cast(parsed, _as), do: parsed
-
-  defp cast_struct(module, map) when is_map(map) do
-    fields = module.__struct__() |> Map.from_struct() |> Map.keys()
-    data = for f <- fields, Map.has_key?(map, to_string(f)), into: %{}, do: {f, map[to_string(f)]}
-    struct(module, data)
-  end
 end

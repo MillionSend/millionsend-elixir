@@ -11,7 +11,7 @@ find-and-replace: swap the module prefix and point `base_url` at your instance.
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.3"}]
+  [{:millionsend, "~> 0.4"}]
 end
 ```
 
@@ -72,6 +72,14 @@ Resolution precedence for each option: explicit `MillionSend.client/1` opts →
 Every function accepts an optional leading `client` argument; omit it to use the
 configured default.
 
+## Payloads
+
+Input maps are sent to the API exactly as written — atom or string keys,
+snake_case names, and every key you pass reaches the wire (an explicit `nil`
+is sent as JSON `null`, which clears a nullable field on update). The API
+validates the payload and rejects what it does not accept, so nothing is
+silently dropped on the way out.
+
 ## Errors
 
 No function raises for an API error — each returns `{:ok, struct}` or
@@ -96,41 +104,94 @@ it if you prefer to bubble failures up.
 ### Emails
 
 ```elixir
-MillionSend.Emails.send(payload)                             # POST /emails
-MillionSend.Emails.send(payload, idempotency_key: key)       # with idempotency
-MillionSend.Emails.get(id)                                   # GET /emails/:id (includes score)
-MillionSend.Emails.get_insights(id)                          # GET /emails/:id/insights
-MillionSend.Emails.cancel(id)                                # POST /emails/:id/cancel (scheduled only)
-MillionSend.Emails.send_batch([a, b], idempotency_key: key)  # POST /emails/batch (up to 100)
+MillionSend.Emails.send(%{
+  from: "Acme <onboarding@acme.dev>",
+  to: ["ada@acme.dev"],                       # string or list; same for cc/bcc/reply_to
+  subject: "Hello",
+  html: "<p>Hi</p>", text: "Hi",
+  reply_to: "support@acme.dev",
+  scheduled_at: "in 2 hours",                 # ISO 8601 or relative
+  tags: [%{name: "campaign", value: "welcome"}],
+  topic_id: topic_id,                         # opted-out recipients are skipped
+  attachments: [%{filename: "hi.txt", content: Base.encode64("hi"), content_type: "text/plain"}],
+  headers: %{"X-Entity-Ref-ID" => "42"}
+}, idempotency_key: key)                      # POST /emails
+
+MillionSend.Emails.get(id)                    # GET /emails/:id (includes score)
+MillionSend.Emails.list(limit: 50, after: cursor)  # GET /emails
+MillionSend.Emails.update(id, scheduled_at: "in 1 day")  # PATCH /emails/:id (scheduled only)
+MillionSend.Emails.cancel(id)                 # POST /emails/:id/cancel (scheduled only)
+MillionSend.Emails.remove(id)                 # DELETE /emails/:id
+MillionSend.Emails.get_insights(id)           # GET /emails/:id/insights
 ```
 
-Input maps are snake_case (`:reply_to`, `:scheduled_at`); `:to`/`:cc`/`:bcc`/
-`:reply_to` accept a string or a list of strings.
+Batches take up to 100 emails. Strict validation (the default) is
+all-or-nothing and returns a plain list; `batch_validation: :permissive` sends
+the `x-batch-validation` header, writes the valid subset and returns a
+`MillionSend.Emails.BatchResponse` with the rejected items in `errors`:
+
+```elixir
+{:ok, [%{id: _}, %{id: _}]} =
+  MillionSend.Emails.send_batch([a, b], idempotency_key: key)       # POST /emails/batch
+
+{:ok, %MillionSend.Emails.BatchResponse{data: sent, errors: errors}} =
+  MillionSend.Emails.send_batch([a, b], batch_validation: :permissive)
+errors  # [%MillionSend.BatchError{index: 1, message: "..."}]
+```
 
 ### Contacts
 
-Contacts are team-global — one per email per team (case-insensitive).
+Contacts are team-global — one per email per team (case-insensitive) — and
+addressable by id or email.
 
 ```elixir
-MillionSend.Contacts.create(%{email: "ada@acme.dev",
-                              first_name: "Ada", properties: %{plan: "pro"}})
+MillionSend.Contacts.create(%{
+  email: "ada@acme.dev", first_name: "Ada", last_name: "Lovelace",
+  unsubscribed: false, properties: %{plan: "pro"},
+  segments: [%{id: segment_id}],
+  topics: [%{id: topic_id, subscription: :opt_in}]
+})
 MillionSend.Contacts.get(%{email: "ada@acme.dev"})     # id or email (email wins)
 MillionSend.Contacts.get("contact-uuid")               # bare id works too
 MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil})  # nil clears
 MillionSend.Contacts.remove(%{email: "ada@acme.dev"})
 MillionSend.Contacts.list(limit: 50, after: cursor)
 
+# Bulk create (up to 1000). on_conflict: :error (default) | :skip | :upsert;
+# batch_validation: :strict (default) | :permissive.
+{:ok, %MillionSend.Contacts.BatchResponse{data: items, counts: counts, errors: errors}} =
+  MillionSend.Contacts.create_batch([%{email: "a@acme.dev"}, %{email: "b@acme.dev"}],
+                                    on_conflict: :upsert, batch_validation: :permissive)
+items   # [%MillionSend.Contacts.BatchResponse.Item{index: 0, id: ..., status: "created"}, ...]
+counts  # %{created: 2, updated: 0, skipped: 0, failed: 0}
+
+# Segment membership
+MillionSend.Contacts.add_to_segment(%{email: "ada@acme.dev"}, segment_id)
+MillionSend.Contacts.remove_from_segment(contact_id, segment_id)
+
 # Topic subscriptions (granular unsubscribe)
 MillionSend.Contacts.update_topics(%{email: "ada@acme.dev",
                                      topics: [%{id: topic_id, subscription: :opt_out}]})
 ```
 
+### Contact properties
+
+```elixir
+MillionSend.ContactProperties.create(%{key: "plan", type: :string, fallback_value: "free"})
+MillionSend.ContactProperties.list()
+MillionSend.ContactProperties.get(id)
+MillionSend.ContactProperties.update(id, %{fallback_value: nil})   # nil clears
+MillionSend.ContactProperties.remove(id)
+```
+
 ### Topics
 
 ```elixir
-MillionSend.Topics.create(%{name: "Product updates", default_subscription: :opt_in})
+MillionSend.Topics.create(%{name: "Product updates", default_subscription: :opt_in,
+                            visibility: :public})
 MillionSend.Topics.get(id)
 MillionSend.Topics.list()      # a plain list — topics are unpaginated
+MillionSend.Topics.update(id, %{description: "Monthly digest"})
 MillionSend.Topics.remove(id)
 ```
 
@@ -139,21 +200,24 @@ MillionSend.Topics.remove(id)
 ```elixir
 # Target with segment_id: and/or topic_id:; omit both to send to all contacts.
 {:ok, broadcast} = MillionSend.Broadcasts.create(%{
-  from: "Acme <news@acme.dev>", subject: "Launch",
-  html: "<p>Hi {{{FIRST_NAME|there}}}</p>"
+  name: "Launch", from: "Acme <news@acme.dev>", subject: "Launch",
+  html: "<p>Hi {{{FIRST_NAME|there}}}</p>", preview_text: "It's here",
+  reply_to: "hello@acme.dev", topic_id: topic_id
 })
+MillionSend.Broadcasts.create(%{..., send: true, scheduled_at: "in 1 hour"})  # create and schedule
 MillionSend.Broadcasts.list()
 MillionSend.Broadcasts.get(id)
-MillionSend.Broadcasts.update(id, %{subject: "Launch 🚀"})              # draft only
+MillionSend.Broadcasts.update(id, %{subject: "Launch 🚀", topic_id: nil})  # draft only; nil clears
 MillionSend.Broadcasts.send(id, scheduled_at: "2026-09-01T09:00:00Z")  # omit to send now
 MillionSend.Broadcasts.cancel(id)                                      # scheduled only
 MillionSend.Broadcasts.remove(id)                                      # draft only
 ```
 
-### Segments (MillionSend extension)
+### Segments
 
-Dynamic segments are a saved filter over the team's contacts — a MillionSend
-superset with no Resend equivalent.
+A segment with a `filter` is dynamic — a saved query over the team's contacts
+(a MillionSend extension; Resend segments are static lists). Without a filter
+it is a plain list you add contacts to.
 
 ```elixir
 MillionSend.Segments.create(%{
@@ -162,8 +226,75 @@ MillionSend.Segments.create(%{
 })
 MillionSend.Segments.get(id)   # includes a live contact_count
 MillionSend.Segments.list()
+MillionSend.Segments.list_contacts(id, limit: 50)
 MillionSend.Segments.update(id, %{name: "Pro tier"})
 MillionSend.Segments.remove(id)
+```
+
+### Suppressions
+
+Addresses that are never sent to. Entries come from bounces, complaints and
+unsubscribes, or are added here; `origin` is `bounce | complaint | manual |
+unsubscribe`.
+
+```elixir
+MillionSend.Suppressions.create(%{email: "gone@example.com", origin: :manual})
+MillionSend.Suppressions.get("gone@example.com")           # id or email
+MillionSend.Suppressions.list(origin: :bounce, limit: 50)
+MillionSend.Suppressions.remove(id)
+MillionSend.Suppressions.batch_add(["a@example.com", "b@example.com"], origin: :unsubscribe)
+MillionSend.Suppressions.batch_remove(%{emails: ["a@example.com"]})   # or %{ids: [...]}
+```
+
+### Domains
+
+```elixir
+{:ok, domain} = MillionSend.Domains.create(%{name: "acme.dev", region: "us-east-1",
+                                             open_tracking: true, tracking_subdomain: "links"})
+domain.records   # [%MillionSend.Domains.Domain.Record{record: "DKIM", name: ..., value: ...}, ...]
+MillionSend.Domains.list()
+MillionSend.Domains.get(id)
+MillionSend.Domains.verify(id)
+MillionSend.Domains.update(id, %{click_tracking: true, tracking_subdomain: nil})  # nil clears
+MillionSend.Domains.remove(id)
+```
+
+### API keys
+
+```elixir
+{:ok, key} = MillionSend.ApiKeys.create(%{name: "ci", permission: :sending_access, domain_id: id})
+key.token        # shown once — store it
+MillionSend.ApiKeys.list()
+MillionSend.ApiKeys.remove(id)
+```
+
+### Webhooks
+
+```elixir
+{:ok, hook} = MillionSend.Webhooks.create(%{
+  endpoint: "https://acme.dev/hooks/email",
+  events: ["email.delivered", "email.bounced", "email.complained"]
+})
+hook.signing_secret
+MillionSend.Webhooks.list()
+MillionSend.Webhooks.get(id)                 # includes signing_secret
+MillionSend.Webhooks.update(id, %{status: :disabled})
+MillionSend.Webhooks.remove(id)
+```
+
+### Templates
+
+Every member function takes the template id or its `alias`.
+
+```elixir
+MillionSend.Templates.create(%{name: "Welcome", alias: "welcome", subject: "Hi!",
+                               html: "<p>Hi</p>", text: "Hi"})
+MillionSend.Templates.list()
+MillionSend.Templates.get("welcome")
+MillionSend.Templates.update("welcome", %{subject: nil})   # nil clears subject/text/alias
+MillionSend.Templates.duplicate("welcome")
+MillionSend.Templates.publish("welcome")     # no-op kept for compatibility: templates publish on write
+MillionSend.Templates.remove("welcome")
 ```
 
 ### Deliverability (MillionSend extension)
@@ -185,6 +316,15 @@ report.score            # 8.7 (nil until enough data)
 report.guardrail_status # "ok" | "warning" | "paused"
 ```
 
+### Usage (MillionSend extension)
+
+```elixir
+{:ok, usage} = MillionSend.Usage.get()      # GET /usage
+usage.plan                                  # "free" | "pro" | "scale" | nil (self-hosted)
+usage.limits["emails_per_day"]              # nil = unlimited / self-hosted
+usage.today["emails_sent"]
+```
+
 ## Migrating from Resend
 
 ```diff
@@ -199,11 +339,12 @@ report.guardrail_status # "ok" | "warning" | "paused"
 
 Module names, function names and payloads match. Notes:
 
-- **Domains and API keys** are managed in the MillionSend dashboard, not via the
-  API, so there are no `Domains`/`ApiKeys` modules here.
 - **No audiences.** Contacts are team-global; drop the `audience_id` from
-  `contacts.*` calls. Target broadcasts with a `segment_id` (a dynamic filter)
-  and/or a `topic_id` instead.
+  `contacts.*` calls. The `/audiences/...` compatibility routes are not part of
+  this SDK. Target broadcasts with a `segment_id` and/or a `topic_id` instead.
+- **Segment filters, deliverability insights and usage** are MillionSend
+  extensions with no Resend counterpart.
+- `Templates.publish/2` is a no-op: templates are published on every write.
 
 ## Testing against a real instance
 

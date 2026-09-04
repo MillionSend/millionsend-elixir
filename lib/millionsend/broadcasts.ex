@@ -1,5 +1,6 @@
 defmodule MillionSend.Broadcasts.Broadcast do
   @moduledoc "A broadcast — an email sent to the team's contacts, optionally targeted."
+  @type t :: %__MODULE__{}
   defstruct [
     :object,
     :id,
@@ -22,9 +23,14 @@ end
 
 defmodule MillionSend.Broadcasts do
   @moduledoc """
-  Broadcasts. Create a draft, then `send/3` it (optionally scheduled).
-  Target with an optional `segment_id` and/or `topic_id`; neither means every
-  contact of the team.
+  Broadcasts. Create a draft, then `send/3` it (optionally scheduled), or pass
+  `send: true` (plus an optional `scheduled_at`) to `create/2` to do both at
+  once. Target with an optional `segment_id` and/or `topic_id`; neither means
+  every contact of the team.
+
+  Input maps are sent as given: `name`, `segment_id`, `from`, `subject`, `html`,
+  `text`, `reply_to`, `preview_text`, `topic_id`, and on create `send` and
+  `scheduled_at`. On `update/3`, `topic_id: nil` clears the topic.
 
       {:ok, b} = MillionSend.Broadcasts.create(%{
         from: "Acme <news@acme.dev>", subject: "Launch", html: "<p>hi</p>"
@@ -38,17 +44,10 @@ defmodule MillionSend.Broadcasts do
   alias MillionSend.{Client, Request}
   alias MillionSend.Broadcasts.Broadcast
 
-  @fields [:name, :segment_id, :from, :subject, :html, :text, :reply_to, :topic_id]
-
   @doc "`POST /broadcasts`"
   @spec create(Client.t(), map()) :: {:ok, Broadcast.t()} | {:error, MillionSend.Error.t()}
   def create(client \\ MillionSend.client(), params) when is_map(params) do
-    Request.run(client,
-      method: :post,
-      path: "/broadcasts",
-      body: Request.take(params, @fields),
-      as: Broadcast
-    )
+    Request.run(client, method: :post, path: "/broadcasts", body: params, as: Broadcast)
   end
 
   @doc "`GET /broadcasts/:id`"
@@ -75,14 +74,14 @@ defmodule MillionSend.Broadcasts do
     )
   end
 
-  @doc "`PATCH /broadcasts/:id` — draft only."
+  @doc "`PATCH /broadcasts/:id` — draft only. `topic_id: nil` clears the topic."
   @spec update(Client.t(), String.t(), map()) ::
           {:ok, Broadcast.t()} | {:error, MillionSend.Error.t()}
   def update(client \\ MillionSend.client(), id, params) when is_binary(id) and is_map(params) do
     Request.run(client,
       method: :patch,
       path: "/broadcasts/" <> Request.encode(id),
-      body: Request.take(params, @fields),
+      body: params,
       as: Broadcast
     )
   end
@@ -114,7 +113,7 @@ defmodule MillionSend.Broadcasts do
     Request.run(client,
       method: :post,
       path: "/broadcasts/" <> Request.encode(id) <> "/send",
-      body: Request.take(Map.new(opts), [:scheduled_at]),
+      body: Map.new(opts),
       as: Broadcast
     )
   end
