@@ -105,17 +105,18 @@ defmodule MillionSend.Request do
 
   defp cast(parsed, nil), do: parsed
 
-  defp cast(parsed, {:list, module}) when is_map(parsed) do
+  # `as` for each item is a struct module or a cast function, as for a single response.
+  defp cast(parsed, {:list, as}) when is_map(parsed) do
     %MillionSend.List{
       object: parsed["object"],
       has_more: parsed["has_more"] || false,
-      data: Enum.map(parsed["data"] || [], &cast_struct(module, &1))
+      data: Enum.map(parsed["data"] || [], &cast(&1, as))
     }
   end
 
   # A bare `{ data: [...] }` body (topics, batch) -> a plain list of structs.
-  defp cast(parsed, {:data, module}) when is_map(parsed) do
-    Enum.map(parsed["data"] || [], &cast_struct(module, &1))
+  defp cast(parsed, {:data, as}) when is_map(parsed) do
+    Enum.map(parsed["data"] || [], &cast(&1, as))
   end
 
   # Responses with nested typed shapes supply their own cast function.

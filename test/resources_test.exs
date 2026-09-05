@@ -491,6 +491,57 @@ defmodule MillionSend.ResourcesTest do
       assert req_query() == "after=cur"
     end
 
+    test "list passes include as a comma-separated list and casts the extra fields", %{client: c} do
+      stub_json(%{
+        "object" => "list",
+        "has_more" => false,
+        "data" => [
+          %{
+            "id" => "c1",
+            "email" => "c@x.dev",
+            "properties" => %{"plan" => %{"type" => "string", "value" => "pro"}},
+            "topics" => [
+              %{
+                "id" => "t1",
+                "name" => "Insights",
+                "description" => nil,
+                "subscription" => "opt_in",
+                "explicit" => true,
+                "visibility" => "public"
+              }
+            ]
+          }
+        ]
+      })
+
+      assert {:ok, %MillionSend.List{data: [contact]}} =
+               MillionSend.Contacts.list(c, limit: 100, include: [:properties, :topics])
+
+      assert req_path() == "/contacts"
+      assert req_query() == "limit=100&include=properties%2Ctopics"
+
+      assert %MillionSend.Contacts.Contact{
+               id: "c1",
+               properties: %{"plan" => %{"type" => "string", "value" => "pro"}},
+               topics: [
+                 %MillionSend.Contacts.TopicSubscription{
+                   id: "t1",
+                   name: "Insights",
+                   subscription: "opt_in",
+                   explicit: true,
+                   visibility: "public"
+                 }
+               ]
+             } = contact
+
+      stub_json(%{"object" => "list", "has_more" => false, "data" => [%{"id" => "c1"}]})
+
+      assert {:ok, %MillionSend.List{data: [%MillionSend.Contacts.Contact{topics: nil}]}} =
+               MillionSend.Contacts.list(c)
+
+      assert req_query() == nil
+    end
+
     test "list_topics gets /contacts/:email/topics and casts the subscriptions", %{client: c} do
       stub_json(%{
         "object" => "list",
@@ -568,6 +619,51 @@ defmodule MillionSend.ResourcesTest do
                MillionSend.Contacts.remove_from_segment(c, "c1", "s1")
 
       assert req_method() == :delete and req_path() == "/contacts/c1/segments/s1"
+    end
+
+    test "batch_get posts ids and emails to /contacts/batch/get and casts missing", %{client: c} do
+      stub_json(%{
+        "object" => "list",
+        "data" => [
+          %{
+            "object" => "contact",
+            "id" => "c1",
+            "email" => "a@x.dev",
+            "topics" => [%{"id" => "t1", "subscription" => "opt_out", "explicit" => false}]
+          }
+        ],
+        "missing" => [%{"index" => 1, "email" => "b@x.dev"}]
+      })
+
+      assert {:ok, %MillionSend.Contacts.BatchGetResponse{data: [contact], missing: missing}} =
+               MillionSend.Contacts.batch_get(c, ["c1", %{email: "b@x.dev"}],
+                 include: [:properties, :topics]
+               )
+
+      assert req_method() == :post and req_path() == "/contacts/batch/get"
+      assert req_query() == nil
+
+      assert req_body() == %{
+               "contacts" => [%{"id" => "c1"}, %{"email" => "b@x.dev"}],
+               "include" => ["properties", "topics"]
+             }
+
+      assert %MillionSend.Contacts.Contact{
+               id: "c1",
+               topics: [
+                 %MillionSend.Contacts.TopicSubscription{id: "t1", subscription: "opt_out"}
+               ]
+             } = contact
+
+      assert [%MillionSend.Contacts.BatchGetResponse.Missing{index: 1, id: nil, email: "b@x.dev"}] =
+               missing
+
+      stub_json(%{"object" => "list", "data" => [%{"id" => "c2"}], "missing" => []})
+
+      assert {:ok, %MillionSend.Contacts.BatchGetResponse{missing: []}} =
+               MillionSend.Contacts.batch_get(c, [%{id: "c2"}])
+
+      assert req_body() == %{"contacts" => [%{"id" => "c2"}]}
     end
 
     test "batch_remove posts ids or emails and casts the deleted rows", %{client: c} do
@@ -768,6 +864,9 @@ defmodule MillionSend.ResourcesTest do
 
       assert req_method() == :get and req_path() == "/segments/s1/contacts"
       assert req_query() == "limit=5"
+
+      assert {:ok, _} = MillionSend.Segments.list_contacts(c, "s1", include: [:topics])
+      assert req_query() == "include=topics"
     end
   end
 

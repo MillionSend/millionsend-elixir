@@ -12,7 +12,7 @@ at your instance).
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.6"}]
+  [{:millionsend, "~> 0.7"}]
 end
 ```
 
@@ -159,7 +159,15 @@ MillionSend.Contacts.get("contact-uuid")               # bare id works too
 MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil})  # nil clears
 MillionSend.Contacts.remove(%{email: "ada@acme.dev"})
 MillionSend.Contacts.list(limit: 50, after: cursor)
+MillionSend.Contacts.list(include: [:properties, :topics])   # ?include= attaches both to every item
 MillionSend.Contacts.batch_remove(%{emails: ["a@acme.dev"]})   # or %{ids: [...]}; up to 1000
+
+# Bulk read (up to 1000) by id or email in one request; unknown entries land in
+# missing instead of failing the call.
+{:ok, %MillionSend.Contacts.BatchGetResponse{data: contacts, missing: missing}} =
+  MillionSend.Contacts.batch_get(["contact-uuid", %{email: "b@acme.dev"}], include: [:topics])
+contacts  # [%MillionSend.Contacts.Contact{id: ..., topics: [%MillionSend.Contacts.TopicSubscription{}, ...]}]
+missing   # [%MillionSend.Contacts.BatchGetResponse.Missing{index: 1, email: "b@acme.dev"}]
 
 # Bulk create (up to 1000). on_conflict: :error (default) | :skip | :upsert;
 # batch_validation: :strict (default) | :permissive.
@@ -237,7 +245,7 @@ MillionSend.Segments.create(%{
 })
 MillionSend.Segments.get(id)   # includes a live contact_count
 MillionSend.Segments.list()
-MillionSend.Segments.list_contacts(id, limit: 50)
+MillionSend.Segments.list_contacts(id, limit: 50, include: [:properties])
 MillionSend.Segments.update(id, %{name: "Pro tier"})
 MillionSend.Segments.remove(id)
 ```

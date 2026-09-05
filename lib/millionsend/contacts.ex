@@ -1,8 +1,14 @@
 defmodule MillionSend.Contacts.Contact do
   @moduledoc """
   A contact. `remove/2` populates `contact` (its id) plus `deleted`.
-  `properties` is a map of `key => %{"type" => "string" | "number", "value" => ...}`.
+  `properties` is a map of `key => %{"type" => "string" | "number", "value" => ...}`
+  (on `get/2`, and on lists and `batch_get/3` with `include: [:properties]`);
+  `topics` is the contact's `MillionSend.Contacts.TopicSubscription`s (lists and
+  `batch_get/3` with `include: [:topics]`). Both are `nil` when not requested.
   """
+  alias MillionSend.Contacts.TopicSubscription
+  alias MillionSend.Request
+
   @type t :: %__MODULE__{}
   defstruct [
     :object,
@@ -13,9 +19,20 @@ defmodule MillionSend.Contacts.Contact do
     :created_at,
     :unsubscribed,
     :properties,
+    :topics,
     :deleted,
     :contact
   ]
+
+  @doc false
+  def cast(map) do
+    contact = Request.cast_struct(__MODULE__, map)
+
+    case contact.topics do
+      nil -> contact
+      topics -> %{contact | topics: Enum.map(topics, &Request.cast_struct(TopicSubscription, &1))}
+    end
+  end
 end
 
 defmodule MillionSend.Contacts.TopicSubscription do
@@ -72,6 +89,34 @@ defmodule MillionSend.Contacts.BatchResponse do
   end
 end
 
+defmodule MillionSend.Contacts.BatchGetResponse do
+  @moduledoc """
+  The result of `MillionSend.Contacts.batch_get/3`: the contacts found as `data`
+  (in request order) and, as `missing`, the request entries that matched no
+  contact.
+  """
+
+  defmodule Missing do
+    @moduledoc "A request entry that matched no contact: its `index` in the request list and the `id` or `email` it named."
+    @type t :: %__MODULE__{}
+    defstruct [:index, :id, :email]
+  end
+
+  alias MillionSend.Contacts.Contact
+  alias MillionSend.Request
+
+  @type t :: %__MODULE__{data: [Contact.t()], missing: [Missing.t()]}
+  defstruct data: [], missing: []
+
+  @doc false
+  def cast(map) do
+    %__MODULE__{
+      data: Enum.map(map["data"] || [], &Contact.cast/1),
+      missing: Enum.map(map["missing"] || [], &Request.cast_struct(Missing, &1))
+    }
+  end
+end
+
 defmodule MillionSend.Contacts do
   @moduledoc """
   Contacts are team-global (one per email per team, case-insensitive) and
@@ -86,12 +131,20 @@ defmodule MillionSend.Contacts do
       MillionSend.Contacts.get(%{email: "ada@acme.dev"})
       MillionSend.Contacts.get("contact-uuid")
       MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil}) # nil clears
+      MillionSend.Contacts.batch_get(["contact-uuid", %{email: "ada@acme.dev"}], include: [:topics])
       MillionSend.Contacts.batch_remove(%{emails: ["ada@acme.dev"]})
       MillionSend.Contacts.preferences_link(%{email: "ada@acme.dev"})
   """
 
   alias MillionSend.{Client, Request}
-  alias MillionSend.Contacts.{BatchResponse, Contact, PreferencesLink, TopicSubscription}
+
+  alias MillionSend.Contacts.{
+    BatchGetResponse,
+    BatchResponse,
+    Contact,
+    PreferencesLink,
+    TopicSubscription
+  }
 
   @type address :: String.t() | map()
 
@@ -139,6 +192,46 @@ defmodule MillionSend.Contacts do
   end
 
   @doc """
+  `POST /contacts/batch/get` — up to 1000 contacts by id (a bare string or
+  `%{id: ...}`) or `%{email: ...}` in one request, which counts once against the
+  rate limit. Returns a `MillionSend.Contacts.BatchGetResponse`: `data` holds
+  the contacts found in request order; entries that match no contact land in
+  `missing` instead of failing the call. Option `include:`
+  (`[:properties, :topics]`) attaches the property map and/or the topic
+  subscriptions to every contact.
+  """
+  @spec batch_get([address()]) :: {:ok, BatchGetResponse.t()} | {:error, MillionSend.Error.t()}
+  def batch_get(addresses) when is_list(addresses),
+    do: batch_get(MillionSend.client(), addresses, [])
+
+  @spec batch_get(Client.t() | [address()], [address()] | keyword()) ::
+          {:ok, BatchGetResponse.t()} | {:error, MillionSend.Error.t()}
+  def batch_get(%Client{} = client, addresses) when is_list(addresses),
+    do: batch_get(client, addresses, [])
+
+  def batch_get(addresses, opts) when is_list(addresses) and is_list(opts),
+    do: batch_get(MillionSend.client(), addresses, opts)
+
+  @spec batch_get(Client.t(), [address()], keyword()) ::
+          {:ok, BatchGetResponse.t()} | {:error, MillionSend.Error.t()}
+  def batch_get(%Client{} = client, addresses, opts) when is_list(addresses) and is_list(opts) do
+    contacts = Enum.map(addresses, &normalize/1)
+
+    body =
+      case opts[:include] do
+        nil -> %{contacts: contacts}
+        include -> %{contacts: contacts, include: include}
+      end
+
+    Request.run(client,
+      method: :post,
+      path: "/contacts/batch/get",
+      body: body,
+      as: &BatchGetResponse.cast/1
+    )
+  end
+
+  @doc """
   `POST /contacts/batch/remove` — delete by `%{emails: [...]}` or `%{ids: [...]}`
   (up to 1000). Returns only the contacts actually deleted, each with `contact`
   (its id) and `deleted: true`; unknown ids or addresses are skipped.
@@ -176,7 +269,11 @@ defmodule MillionSend.Contacts do
     Request.run(client, method: :delete, path: member_path(address), as: Contact)
   end
 
-  @doc "`GET /contacts` — accepts `limit:`, `after:`, `before:`."
+  @doc """
+  `GET /contacts` — accepts `limit:`, `after:`, `before:` and `include:`
+  (`[:properties, :topics]`), which attaches the property map and/or the topic
+  subscriptions to every item.
+  """
   @spec list(Client.t() | keyword()) ::
           {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
   def list(), do: list(MillionSend.client(), [])
@@ -189,10 +286,15 @@ defmodule MillionSend.Contacts do
     Request.run(client,
       method: :get,
       path: "/contacts",
-      query: Request.list_query(opts),
-      as: {:list, Contact}
+      query: Request.list_query(opts) ++ include_query(opts),
+      as: {:list, &Contact.cast/1}
     )
   end
+
+  @doc false
+  @spec include_query(keyword()) :: keyword()
+  def include_query(opts),
+    do: [include: if(include = opts[:include], do: Enum.join(include, ","))]
 
   @doc """
   `GET /contacts/:id_or_email/topics` — every topic with the contact's effective

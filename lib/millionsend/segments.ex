@@ -17,7 +17,7 @@ defmodule MillionSend.Segments do
       })
   """
 
-  alias MillionSend.{Client, Request}
+  alias MillionSend.{Client, Contacts, Request}
   alias MillionSend.Contacts.Contact
   alias MillionSend.Segments.Segment
 
@@ -51,7 +51,11 @@ defmodule MillionSend.Segments do
     )
   end
 
-  @doc "`GET /segments/:id/contacts` — the segment's members; accepts `limit:`, `after:`, `before:`."
+  @doc """
+  `GET /segments/:id/contacts` — the segment's members; accepts `limit:`,
+  `after:`, `before:` and `include:` (`[:properties, :topics]`, as
+  `MillionSend.Contacts.list/2`).
+  """
   @spec list_contacts(String.t()) :: {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
   def list_contacts(id) when is_binary(id), do: list_contacts(MillionSend.client(), id, [])
 
@@ -68,8 +72,8 @@ defmodule MillionSend.Segments do
     Request.run(client,
       method: :get,
       path: "/segments/" <> Request.encode(id) <> "/contacts",
-      query: Request.list_query(opts),
-      as: {:list, Contact}
+      query: Request.list_query(opts) ++ Contacts.include_query(opts),
+      as: {:list, &Contact.cast/1}
     )
   end
 
