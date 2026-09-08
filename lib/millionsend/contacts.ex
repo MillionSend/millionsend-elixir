@@ -133,6 +133,7 @@ defmodule MillionSend.Contacts do
       MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil}) # nil clears
       MillionSend.Contacts.batch_get(["contact-uuid", %{email: "ada@acme.dev"}], include: [:topics])
       MillionSend.Contacts.batch_remove(%{emails: ["ada@acme.dev"]})
+      MillionSend.Contacts.remove(%{email: "ada@acme.dev"}, erase: true) # also scrubs the address from logs
       MillionSend.Contacts.preferences_link(%{email: "ada@acme.dev"})
   """
 
@@ -234,7 +235,9 @@ defmodule MillionSend.Contacts do
   @doc """
   `POST /contacts/batch/remove` — delete by `%{emails: [...]}` or `%{ids: [...]}`
   (up to 1000). Returns only the contacts actually deleted, each with `contact`
-  (its id) and `deleted: true`; unknown ids or addresses are skipped.
+  (its id) and `deleted: true`; unknown ids or addresses are skipped. Their
+  emails stay in the send log; `erase: true` in the map also scrubs each address
+  from email history, event payloads and API logs (a GDPR/LGPD erasure).
   """
   @spec batch_remove(Client.t(), map()) :: {:ok, [Contact.t()]} | {:error, MillionSend.Error.t()}
   def batch_remove(client \\ MillionSend.client(), params) when is_map(params) do
@@ -263,10 +266,28 @@ defmodule MillionSend.Contacts do
     )
   end
 
-  @doc "`DELETE /contacts/:id_or_email` — by id/email map or a bare id string."
-  @spec remove(Client.t(), address()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
-  def remove(client \\ MillionSend.client(), address) do
-    Request.run(client, method: :delete, path: member_path(address), as: Contact)
+  @doc """
+  `DELETE /contacts/:id_or_email` — by id/email map or a bare id string. The
+  contact's emails stay in the send log; option `erase: true` also scrubs the
+  address from email history, event payloads and API logs (a GDPR/LGPD erasure).
+  """
+  @spec remove(address()) :: {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
+  def remove(address), do: remove(MillionSend.client(), address, [])
+
+  @spec remove(Client.t() | address(), address() | keyword()) ::
+          {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
+  def remove(%Client{} = client, address), do: remove(client, address, [])
+  def remove(address, opts) when is_list(opts), do: remove(MillionSend.client(), address, opts)
+
+  @spec remove(Client.t(), address(), keyword()) ::
+          {:ok, Contact.t()} | {:error, MillionSend.Error.t()}
+  def remove(%Client{} = client, address, opts) when is_list(opts) do
+    Request.run(client,
+      method: :delete,
+      path: member_path(address),
+      query: [erase: opts[:erase]],
+      as: Contact
+    )
   end
 
   @doc """

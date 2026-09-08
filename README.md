@@ -12,7 +12,7 @@ at your instance).
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.7"}]
+  [{:millionsend, "~> 0.8"}]
 end
 ```
 
@@ -157,10 +157,12 @@ MillionSend.Contacts.create(%{
 MillionSend.Contacts.get(%{email: "ada@acme.dev"})     # id or email (email wins)
 MillionSend.Contacts.get("contact-uuid")               # bare id works too
 MillionSend.Contacts.update(%{id: id, unsubscribed: true, first_name: nil})  # nil clears
-MillionSend.Contacts.remove(%{email: "ada@acme.dev"})
+MillionSend.Contacts.remove(%{email: "ada@acme.dev"})               # emails stay in the send log
+MillionSend.Contacts.remove(%{email: "ada@acme.dev"}, erase: true)  # also scrubs the address from history and logs (GDPR/LGPD)
 MillionSend.Contacts.list(limit: 50, after: cursor)
 MillionSend.Contacts.list(include: [:properties, :topics])   # ?include= attaches both to every item
-MillionSend.Contacts.batch_remove(%{emails: ["a@acme.dev"]})   # or %{ids: [...]}; up to 1000
+MillionSend.Contacts.batch_remove(%{emails: ["a@acme.dev"]})   # or %{ids: [...]}; up to 1000; emails stay in the send log
+MillionSend.Contacts.batch_remove(%{ids: [id], erase: true})    # also scrubs each address from history and logs
 
 # Bulk read (up to 1000) by id or email in one request; unknown entries land in
 # missing instead of failing the call.

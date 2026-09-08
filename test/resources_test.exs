@@ -485,6 +485,11 @@ defmodule MillionSend.ResourcesTest do
     test "remove and list", %{client: c} do
       assert {:ok, _} = MillionSend.Contacts.remove(c, %{email: "c@x.dev"})
       assert req_method() == :delete
+      assert req_query() == nil
+
+      assert {:ok, _} = MillionSend.Contacts.remove(c, "c1", erase: true)
+      assert req_method() == :delete and req_path() == "/contacts/c1"
+      assert req_query() == "erase=true"
 
       assert {:ok, %MillionSend.List{}} = MillionSend.Contacts.list(c, after: "cur")
       assert req_path() == "/contacts"
@@ -677,6 +682,9 @@ defmodule MillionSend.ResourcesTest do
 
       assert {:ok, _} = MillionSend.Contacts.batch_remove(c, %{ids: ["c1", "c2"]})
       assert req_body() == %{"ids" => ["c1", "c2"]}
+
+      assert {:ok, _} = MillionSend.Contacts.batch_remove(c, %{ids: ["c1"], erase: true})
+      assert req_body() == %{"ids" => ["c1"], "erase" => true}
     end
 
     test "preferences_link posts to /contacts/:id_or_email/preferences-link", %{client: c} do
