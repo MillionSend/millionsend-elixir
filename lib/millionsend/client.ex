@@ -33,6 +33,8 @@ defmodule MillionSend.Client do
   API key travels as a bearer header).
   """
   @spec new(keyword()) :: t()
+  # Credo scores each `||` in the opts/config/env fallback chains as a branch.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def new(opts \\ []) do
     config = Application.get_env(:millionsend, __MODULE__, [])
 
