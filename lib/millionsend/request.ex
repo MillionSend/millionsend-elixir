@@ -12,6 +12,25 @@ defmodule MillionSend.Request do
 
   @spec run(Client.t(), keyword()) :: {:ok, term()} | {:error, Error.t()}
   def run(%Client{} = client, opts) do
+    if dot_segment?(Keyword.fetch!(opts, :path)) do
+      {:error,
+       %Error{
+         name: "validation_error",
+         message: ~s(An id in the request path is empty, "." or ".."),
+         status_code: nil
+       }}
+    else
+      send_request(client, opts)
+    end
+  end
+
+  # URL normalization resolves an empty, "." or ".." segment away, so an id
+  # such as ".." would send the request to another resource
+  # (DELETE /inboxes/{id}/labels/.. deletes the inbox).
+  defp dot_segment?(path),
+    do: path |> String.split("/") |> tl() |> Enum.any?(&(&1 in ["", ".", ".."]))
+
+  defp send_request(client, opts) do
     method = Keyword.fetch!(opts, :method)
     path = Keyword.fetch!(opts, :path)
     body = Keyword.get(opts, :body)

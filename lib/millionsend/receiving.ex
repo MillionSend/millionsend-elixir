@@ -91,8 +91,9 @@ end
 defmodule MillionSend.Receiving.EmailList do
   @moduledoc """
   A page of received mail. With `wait:`, `held` lists the matching emails that
-  arrived but are held (quarantined or being screened), by id only: maps with
-  `"id"`, `"inbox_id"`, `"reason"` and `"created_at"`. It is `nil` otherwise.
+  arrived but are held (quarantined or being screened), by id and why only: maps
+  with `"id"`, `"inbox_id"`, `"reason"` (`"pending"` or `"quarantined"`),
+  `"quarantine_reason"` and `"created_at"`. It is `nil` otherwise.
   """
   alias MillionSend.Receiving.ReceivedEmail
 

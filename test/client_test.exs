@@ -218,6 +218,23 @@ defmodule MillionSend.ClientTest do
       assert error.message =~ "econnrefused"
     end
 
+    test "never sends a path an empty, \".\" or \"..\" id would turn into another resource's" do
+      Process.delete(:ms_last_request)
+
+      for result <- [
+            MillionSend.Inboxes.Labels.remove(client(), "ib1", ".."),
+            MillionSend.Inboxes.Threads.remove(client(), "ib1", "."),
+            MillionSend.Emails.get(client(), "")
+          ] do
+        assert {:error, %MillionSend.Error{name: "validation_error", status_code: nil}} = result
+      end
+
+      assert last_request() == nil
+      stub_json(%{"object" => "inbox_label", "id" => "...", "deleted" => true})
+      assert {:ok, _} = MillionSend.Inboxes.Labels.remove(client(), "ib1", "...")
+      assert req_path() == "/inboxes/ib1/labels/..."
+    end
+
     test "falls back to a generic error when the body is not the canonical shape" do
       stub_response(500, "gateway boom")
       assert {:error, error} = MillionSend.Emails.get(client(), "e1")
