@@ -4,7 +4,8 @@ defmodule MillionSend.Webhooks.Webhook do
   `rotate/3`; `status` is `"enabled" | "disabled"`. `previous_secret_expires_at`
   (`get/2`, `rotate/3`) is the ISO instant until which deliveries are also
   signed with the secret the current one replaced, `nil` outside a rotation's
-  overlap window. `remove/2` populates `id` plus `deleted`.
+  overlap window. `inbox_ids` limits inbox events and `email.received` to some
+  inboxes (`nil` for every inbox). `remove/2` populates `id` plus `deleted`.
   """
   @type t :: %__MODULE__{}
   defstruct [
@@ -12,6 +13,7 @@ defmodule MillionSend.Webhooks.Webhook do
     :id,
     :endpoint,
     :events,
+    :inbox_ids,
     :status,
     :signing_secret,
     :previous_secret_expires_at,
@@ -23,9 +25,10 @@ end
 defmodule MillionSend.Webhooks do
   @moduledoc """
   Webhooks. Input maps are sent as given: `create/2` accepts `endpoint`,
-  `events` and an optional `signing_secret` (carry over an existing `whsec_`
-  secret so the receiver keeps verifying unchanged); `update/3` accepts
-  `endpoint`, `events` and `status`.
+  `events`, an optional `signing_secret` (carry over an existing `whsec_`
+  secret so the receiver keeps verifying unchanged) and `inbox_ids`; `update/3`
+  accepts `endpoint`, `events`, `status` and `inbox_ids` (`nil` removes the
+  filter).
 
       MillionSend.Webhooks.create(%{
         endpoint: "https://acme.dev/hooks/email",
@@ -36,7 +39,12 @@ defmodule MillionSend.Webhooks do
   `bounced`, `complained`, `opened`, `clicked`), `deliverability.*` (`warning`,
   `paused`), `quota.*` (`warning`, `reached`, `paused`), `contact.*` (`created`,
   `updated`, `deleted`, `unsubscribed`, `resubscribed`, `topic_opt_in`,
-  `topic_opt_out`) and `suppression.*` (`added`, `removed`).
+  `topic_opt_out`), `suppression.*` (`added`, `removed`), `email.received`, and
+  the inbox events: `inbox.*` (`created`, `updated`, `deleted`, `expired`),
+  `inbox.thread.*` (`created`, `folder.updated`, `labels.updated`),
+  `inbox.email.*` (`received`, `sent`, `quarantined`) and `inbox.draft.*`
+  (`created`, `updated`, `sent`, `deleted`). `email.received` and the inbox
+  events reach only endpoints that name them.
   """
 
   alias MillionSend.{Client, Request}

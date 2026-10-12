@@ -12,7 +12,9 @@ defmodule MillionSend.Domains.Domain do
   @moduledoc """
   A sending domain. `records` lists the DNS records to publish (empty on list
   and delete responses); `capabilities` is the `%{"sending" => ..., "receiving"
-  => ...}` map as returned by the API.
+  => ...}` map as returned by the API. `receiving_catch_all`: on, mail to
+  addresses without an inbox lands in the received list; off, those addresses
+  are refused at SMTP time.
   """
   alias MillionSend.Domains.Domain.Record
   alias MillionSend.Request
@@ -29,6 +31,7 @@ defmodule MillionSend.Domains.Domain do
     :click_tracking,
     :tracking_subdomain,
     :capabilities,
+    :receiving_catch_all,
     :deleted,
     records: []
   ]
@@ -46,8 +49,9 @@ defmodule MillionSend.Domains do
 
   Input maps are sent as given: `create/2` accepts `name`, `region`,
   `custom_return_path`, `open_tracking`, `click_tracking` and
-  `tracking_subdomain`; `update/3` accepts `open_tracking`, `click_tracking`
-  and `tracking_subdomain` (`nil` clears it).
+  `tracking_subdomain`; `update/3` accepts `open_tracking`, `click_tracking`,
+  `tracking_subdomain` (`nil` clears it) and `receiving_catch_all` (a paid plan
+  on MillionSend Cloud).
 
       {:ok, domain} = MillionSend.Domains.create(%{name: "acme.dev"})
       domain.records  # [%MillionSend.Domains.Domain.Record{record: "DKIM", ...}, ...]

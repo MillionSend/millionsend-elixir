@@ -12,7 +12,7 @@ at your instance).
 ```elixir
 # mix.exs
 def deps do
-  [{:millionsend, "~> 0.8"}]
+  [{:millionsend, "~> 0.9"}]
 end
 ```
 
@@ -83,7 +83,8 @@ silently dropped on the way out.
 
 ## Errors
 
-No function raises for an API error — each returns `{:ok, struct}` or
+No function raises for an API error — each returns `{:ok, struct}` (the inbox
+sends: `{:ok, {:sent, struct}}` or `{:ok, {:draft, draft}}`) or
 `{:error, %MillionSend.Error{}}`. The error's `name` is a stable snake_case code
 you can match on (`"validation_error"`, `"not_found"`, `"restricted_api_key"`,
 `"sending_paused"`, …). Client-side and transport failures carry
@@ -267,6 +268,101 @@ MillionSend.Suppressions.batch_add(["a@example.com", "b@example.com"], origin: :
 MillionSend.Suppressions.batch_remove(%{emails: ["a@example.com"]})   # or %{ids: [...]}
 ```
 
+### Receiving
+
+Mail received at your receiving domains and inboxes. Everything in a received
+email was written by its sender, so show its HTML only in a sandbox.
+
+```elixir
+{:ok, page} = MillionSend.Receiving.list(inbox_id: inbox_id, from: "acme.dev", limit: 20)  # newest first
+{:ok, email} = MillionSend.Receiving.get(id)          # html_format: "cid" keeps cid: references
+email.extracted_text                                  # the reply without quotes, signature or hidden text
+email.screening["sender_trust"]                       # "owner", "allowlisted", "known_thread", "external", …
+email.extracted["code"]                               # a verification code, when one was found
+
+# Long-poll: returns as soon as matching mail arrives (or an empty page after 30 s)
+{:ok, page} = MillionSend.Receiving.list(inbox_id: inbox_id, wait: 30)
+page.held                                             # matching mail held in quarantine, ids only
+
+case MillionSend.Receiving.reply(id, %{text: "Thanks, confirmed."}, idempotency_key: "reply-#{id}") do
+  {:ok, {:sent, sent}} -> sent.thread_id
+  {:ok, {:draft, draft}} -> draft.approval_reasons    # held for a person to approve (HTTP 202)
+  {:error, error} -> error.name
+end
+
+MillionSend.Receiving.forward(id, %{to: "ops@acme.dev", mode: "attachment"})
+MillionSend.Receiving.remove(id)                      # erase now
+MillionSend.Receiving.Attachments.list(id)            # signed download links, valid one hour
+MillionSend.Receiving.Attachments.get(id, attachment_id)
+```
+
+Held mail is invisible to inbox-scoped keys: a detail read answers 403
+`email_quarantined`. `include_quarantined: true` lists it for full-access keys.
+With `wait:` the SDK raises the HTTP receive timeout to cover the wait.
+
+### Inboxes
+
+An inbox is one address that receives mail, read by an agent (`kind: "agent"`,
+the default) or by people (`"human"`), with threads in both directions. The
+paths mirror Resend's Inboxes API; `kind`, `shared`, `expires_at`, safety,
+quarantine and codes are MillionSend extensions. Folder, verdict, kind and
+status values are plain strings, so new server values never break decoding.
+
+```elixir
+alias MillionSend.Inboxes
+
+{:ok, inbox} = Inboxes.create(%{name: "Signup bot", expires_in: "24h",   # no email_address: shared domain
+                                safety: %{accept_from: "anyone"}})
+Inboxes.list(kind: "agent")
+Inboxes.get("bot@acme.dev")                           # by id or address
+Inboxes.update(inbox.id, %{expires_in: nil})          # nil: never expires
+Inboxes.remove(inbox.id)
+
+# Verification codes and sign-in links (links are never fetched)
+{:ok, code} = Inboxes.Codes.latest(inbox_id, from: "github.com", wait: 30)
+code.status                                           # "found" | "none" | "ambiguous" | "timeout"
+
+# Safety rules (inbox-scoped keys can read them, never change them)
+Inboxes.Safety.get(inbox_id)
+Inboxes.Safety.update(inbox_id, %{accept_from: "allowlist", allowlist: ["*@partner.dev"], send_cap: 100})
+
+# Quarantine: held mail is kept and listed until a person releases it
+Inboxes.Quarantine.list(inbox_id)
+Inboxes.Quarantine.release(inbox_id, email_id, trust_sender: true)   # also allowlists the sender
+
+# Threads and their emails
+Inboxes.Threads.list(inbox_id, folders: ["inbox", "archive"], read: false)
+Inboxes.Threads.search(inbox_id, query: "invoice -draft", from: ["acme"])
+Inboxes.Threads.get(inbox_id, thread_id)
+Inboxes.Threads.update(inbox_id, thread_id, %{read: true, folder: "archive"})
+Inboxes.Threads.remove(inbox_id, thread_id)           # to trash, purged after 30 days
+Inboxes.ThreadEmails.list(inbox_id, thread_id)        # oldest first
+Inboxes.ThreadEmails.get(inbox_id, thread_id, email_id)
+Inboxes.ThreadEmails.reply(inbox_id, thread_id, email_id, %{text: "On it"})
+Inboxes.ThreadEmails.forward(inbox_id, thread_id, email_id, %{to: "ops@acme.dev"})
+
+# Labels
+{:ok, label} = Inboxes.Labels.create(inbox_id, %{name: "Billing"})
+Inboxes.Labels.list(inbox_id)
+Inboxes.Labels.update(inbox_id, label.id, %{color: "#FF8800"})
+Inboxes.Labels.remove(inbox_id, label.id)
+
+# Drafts, including the ones the send rules hold for approval
+{:ok, draft} = Inboxes.Drafts.create(inbox_id, %{to: "ada@example.com", subject: "Hello", text: "Hi Ada"})
+Inboxes.Drafts.list(inbox_id)
+Inboxes.Drafts.get(inbox_id, draft.id)
+Inboxes.Drafts.update(inbox_id, draft.id, %{subject: nil})   # nil clears
+Inboxes.Drafts.send(inbox_id, draft.id)               # {:ok, {:sent, draft}} | {:ok, {:draft, held}}
+Inboxes.Drafts.reject(inbox_id, draft.id)             # approvers only
+Inboxes.Drafts.remove(inbox_id, draft.id)
+```
+
+Reply, forward and draft send return `{:ok, {:sent, struct}}`, or
+`{:ok, {:draft, %MillionSend.Inboxes.Draft{}}}` when the inbox's send rules held
+the message for a person to approve (the API's 202). An inbox-scoped key
+sending a pending draft gets 403 `approval_required`. Hosted agent settings
+(`/inboxes/:id/agent`) are not exposed: MillionSend runs no agent of its own.
+
 ### Domains
 
 ```elixir
@@ -277,8 +373,12 @@ MillionSend.Domains.list()
 MillionSend.Domains.get(id)
 MillionSend.Domains.verify(id)
 MillionSend.Domains.update(id, %{click_tracking: true, tracking_subdomain: nil})  # nil clears
+MillionSend.Domains.update(id, %{receiving_catch_all: true})   # paid plans on Cloud
 MillionSend.Domains.remove(id)
 ```
+
+`receiving_catch_all`: on, mail to addresses without an inbox lands in the
+received list; off, those addresses are refused at SMTP time.
 
 ### API keys
 
@@ -287,6 +387,9 @@ MillionSend.Domains.remove(id)
 key.token        # shown once — store it
 MillionSend.ApiKeys.list()
 MillionSend.ApiKeys.remove(id)
+
+# A key restricted to one inbox: it reads that inbox and sends from its address only
+MillionSend.ApiKeys.create(%{name: "support-agent", inbox_id: inbox_id})
 ```
 
 ### Webhooks
@@ -313,6 +416,13 @@ rotated.previous_secret_expires_at           # nil when overlap_hours: 0
 Events include `email.*`, `deliverability.*`, `quota.*`, `contact.*`
 (`created`, `updated`, `deleted`, `unsubscribed`, `resubscribed`,
 `topic_opt_in`, `topic_opt_out`) and `suppression.*` (`added`, `removed`).
+
+`email.received` and the inbox events (`inbox.created|updated|deleted|expired`,
+`inbox.thread.created|folder.updated|labels.updated`,
+`inbox.email.received|sent|quarantined`, `inbox.draft.created|updated|sent|deleted`)
+reach only endpoints that name them; an endpoint subscribed to all events skips
+them. `inbox_ids: [...]` narrows them to some inboxes; `inbox_ids: nil` on
+update removes the filter.
 
 ### Templates
 
@@ -375,7 +485,9 @@ Module names, function names and payloads match. Notes:
   `contacts.*` calls. The `/audiences/...` compatibility routes are not part of
   this SDK. Target broadcasts with a `segment_id` and/or a `topic_id` instead.
 - **Segment filters, deliverability insights and usage** are MillionSend
-  extensions with no Resend counterpart.
+  extensions with no Resend counterpart, as are, on received mail and inboxes,
+  the long-poll `wait:`, received-mail reply/forward/remove, inbox safety, codes,
+  quarantine, draft reject and the extension fields.
 - `Templates.publish/2` is a no-op: templates are published on every write.
 
 ## Testing against a real instance

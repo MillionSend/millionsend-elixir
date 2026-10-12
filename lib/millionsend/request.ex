@@ -22,11 +22,21 @@ defmodule MillionSend.Request do
     encoded = if is_nil(body), do: nil, else: Jason.encode!(body)
     headers = headers(client, method, encoded, opts)
 
-    case client.http_client.request(%{method: method, url: url, headers: headers, body: encoded}) do
+    request =
+      put_timeout(%{method: method, url: url, headers: headers, body: encoded}, opts[:wait])
+
+    case client.http_client.request(request) do
       {:ok, %{status: status, body: raw}} -> handle(status, raw, as)
       {:error, reason} -> {:error, Error.transport(reason)}
     end
   end
+
+  # A long-poll holds the response for up to `wait` seconds, past the HTTP
+  # client's default receive timeout (15 s for Req).
+  defp put_timeout(request, wait) when is_integer(wait) and wait > 0,
+    do: Map.put(request, :receive_timeout, (wait + 15) * 1_000)
+
+  defp put_timeout(request, _wait), do: request
 
   @doc "Percent-encodes a single path segment the way `encodeURIComponent` does."
   @spec encode(term()) :: String.t()
@@ -47,10 +57,11 @@ defmodule MillionSend.Request do
   defp handle(status, raw, as) do
     parsed = decode(raw)
 
-    if status in 200..299 do
-      {:ok, cast(parsed, as)}
-    else
-      {:error, Error.from_body(parsed, status)}
+    cond do
+      status not in 200..299 -> {:error, Error.from_body(parsed, status)}
+      # A two-arity cast also gets the status: the inbox sends answer 202 with a held draft.
+      is_function(as, 2) and is_map(parsed) -> {:ok, as.(parsed, status)}
+      true -> {:ok, cast(parsed, as)}
     end
   end
 

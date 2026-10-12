@@ -38,6 +38,9 @@ defmodule MillionSend do
   Every function returns `{:ok, struct}` on an HTTP 200 or
   `{:error, %MillionSend.Error{}}` on any non-2xx or transport failure. A
   transport/client failure that never reached the API carries `status_code: nil`.
+  The inbox sends (reply, forward, draft send) return `{:ok, {:sent, struct}}`,
+  or `{:ok, {:draft, %MillionSend.Inboxes.Draft{}}}` when the inbox's send rules
+  held the message for approval.
   """
 
   @doc """
