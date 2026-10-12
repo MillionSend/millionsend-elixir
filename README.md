@@ -297,7 +297,8 @@ MillionSend.Receiving.Attachments.get(id, attachment_id)
 ```
 
 Held mail is invisible to inbox-scoped keys: a detail read answers 403
-`email_quarantined`. `include_quarantined: true` lists it for full-access keys.
+`email_quarantined`. For full-access keys, `include_quarantined: true` lists it
+too and `quarantined: true` lists it alone.
 With `wait:` the SDK raises the HTTP receive timeout to cover the wait.
 
 ### Inboxes
@@ -417,12 +418,13 @@ Events include `email.*`, `deliverability.*`, `quota.*`, `contact.*`
 (`created`, `updated`, `deleted`, `unsubscribed`, `resubscribed`,
 `topic_opt_in`, `topic_opt_out`) and `suppression.*` (`added`, `removed`).
 
-`email.received` and the inbox events (`inbox.created|updated|deleted|expired`,
+The inbox events (`inbox.created|updated|deleted|expired`,
 `inbox.thread.created|folder.updated|labels.updated`,
 `inbox.email.received|sent|quarantined`, `inbox.draft.created|updated|sent|deleted`)
 reach only endpoints that name them; an endpoint subscribed to all events skips
-them. `inbox_ids: [...]` narrows them to some inboxes; `inbox_ids: nil` on
-update removes the filter.
+them, though it does get `email.received`. `inbox_ids: [...]` narrows the inbox
+events and `email.received` to some inboxes; `inbox_ids: nil` on update removes
+the filter.
 
 ### Templates
 

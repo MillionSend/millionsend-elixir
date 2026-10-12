@@ -129,7 +129,8 @@ defmodule MillionSend.Receiving do
       {:ok, page} = MillionSend.Receiving.list(inbox_id: inbox_id, wait: 30)
 
   `reply/4` and `forward/4` return `{:ok, {:sent, %MillionSend.Inboxes.ThreadEmail{}}}`
-  when the email went out (`id`, `thread_id` and `inbox_id` set), or
+  when the email went out (`id`, `thread_id` and `inbox_id` set; the last two
+  are `nil` for mail no inbox took), or
   `{:ok, {:draft, %MillionSend.Inboxes.Draft{}}}` when the inbox's send rules
   held it for a person to approve (the API answers 202).
   Their params are sent as given: `text`, `html`, `subject`, `cc`, `bcc`,
@@ -143,10 +144,12 @@ defmodule MillionSend.Receiving do
 
   @doc """
   `GET /emails/receiving` — newest first. Options: `limit:`, `after:`,
-  `before:`, `wait:` (0..50 seconds), `since:` (ISO 8601), `inbox_id:`, `to:`
-  (an address the message was delivered to), `from:` (an address, or a domain
-  covering its subdomains), `subject_contains:`, `unread:` (needs `inbox_id:`)
-  and `include_quarantined: true` (a full-access key not scoped to an inbox).
+  `before:`, `wait:` (0..50 seconds), `since:` (an ISO 8601 string with an
+  offset, as `DateTime.to_iso8601/1` writes it), `inbox_id:`, `to:` (an address
+  the message was delivered to), `from:` (an address, or a domain covering its
+  subdomains), `subject_contains:`, `unread:` (needs `inbox_id:`),
+  `include_quarantined: true` (held mail too) and `quarantined: true` (held mail
+  only); the last two need a full-access key not scoped to an inbox.
   """
   @spec list(Client.t() | keyword()) :: {:ok, EmailList.t()} | {:error, MillionSend.Error.t()}
   def list(), do: list(MillionSend.client(), [])
@@ -165,7 +168,8 @@ defmodule MillionSend.Receiving do
           from: opts[:from],
           subject_contains: opts[:subject_contains],
           unread: opts[:unread],
-          include_quarantined: if(opts[:include_quarantined], do: true)
+          include_quarantined: if(opts[:include_quarantined], do: true),
+          quarantined: if(opts[:quarantined], do: true)
         ]
 
     Request.run(client,

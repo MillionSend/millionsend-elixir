@@ -101,7 +101,13 @@ defmodule MillionSend.InboxesTest do
         "has_more" => false,
         "data" => [@received],
         "held" => [
-          %{"id" => "r2", "inbox_id" => "i1", "reason" => "not_allowlisted", "created_at" => "x"}
+          %{
+            "id" => "r2",
+            "inbox_id" => "i1",
+            "reason" => "quarantined",
+            "quarantine_reason" => "not_allowlisted",
+            "created_at" => "2026-10-12T10:00:01.000Z"
+          }
         ]
       })
 
@@ -127,7 +133,8 @@ defmodule MillionSend.InboxesTest do
                  "&include_quarantined=true"
 
       assert last_request().receive_timeout == 35_000
-      assert held["reason"] == "not_allowlisted"
+      assert held["reason"] == "quarantined"
+      assert held["quarantine_reason"] == "not_allowlisted"
       assert email.screening["sender_trust"] == "a_tier_from_a_newer_server"
       assert [%Attachment{size: 42, content_disposition: "attachment"}] = email.attachments
 
@@ -138,6 +145,9 @@ defmodule MillionSend.InboxesTest do
 
       assert {:ok, _} = Receiving.list(c, include_quarantined: false, unread: false)
       assert req_query() == "unread=false"
+
+      assert {:ok, _} = Receiving.list(c, quarantined: true)
+      assert req_query() == "quarantined=true"
     end
 
     test "get decodes the extension fields", %{client: c} do
@@ -552,10 +562,10 @@ defmodule MillionSend.InboxesTest do
       })
 
       assert {:ok, %MillionSend.List{data: [%ThreadEmail{direction: "inbound"} = inbound]}} =
-               Inboxes.ThreadEmails.list(c, "i1", "t1", after: "r0")
+               Inboxes.ThreadEmails.list(c, "i1", "t1", after: "r0", include_quarantined: true)
 
       assert req_method() == :get and req_path() == "/inboxes/i1/threads/t1/emails"
-      assert req_query() == "after=r0"
+      assert req_query() == "after=r0&include_quarantined=true"
       assert inbound.screening["verdict"] == "suspicious"
       assert inbound.attachments == []
 
@@ -575,6 +585,12 @@ defmodule MillionSend.InboxesTest do
                Inboxes.ThreadEmails.get(c, "i1", "t1", "e9")
 
       assert req_path() == "/inboxes/i1/threads/t1/emails/e9"
+      assert req_query() == nil
+
+      assert {:ok, %ThreadEmail{}} =
+               Inboxes.ThreadEmails.get(c, "i1", "t1", "e9", include_quarantined: true)
+
+      assert req_query() == "include_quarantined=true"
 
       assert {:ok, {:sent, %ThreadEmail{email_id: "e9", inbox_id: "i1"}}} =
                Inboxes.ThreadEmails.reply(

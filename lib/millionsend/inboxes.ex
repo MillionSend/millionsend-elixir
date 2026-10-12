@@ -607,7 +607,11 @@ defmodule MillionSend.Inboxes.ThreadEmails do
   alias MillionSend.{Client, Request}
   alias MillionSend.Inboxes.{Draft, ThreadEmail, Threads}
 
-  @doc "`GET /inboxes/:inbox_id/threads/:thread_id/emails` — oldest first; `after:` pages to newer."
+  @doc """
+  `GET /inboxes/:inbox_id/threads/:thread_id/emails` — oldest first; `after:`
+  pages to newer. Also `limit:`, `before:` and `include_quarantined: true`
+  (held messages too; owner views).
+  """
   @spec list(String.t(), String.t()) ::
           {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
   def list(inbox_id, thread_id) when is_binary(inbox_id),
@@ -628,19 +632,38 @@ defmodule MillionSend.Inboxes.ThreadEmails do
     Request.run(client,
       method: :get,
       path: Threads.path(inbox_id, thread_id) <> "/emails",
-      query: Request.list_query(opts),
+      query: Request.list_query(opts) ++ include_quarantined(opts),
       as: {:list, &ThreadEmail.cast/1}
     )
   end
 
-  @doc "`GET /inboxes/:inbox_id/threads/:thread_id/emails/:email_id`"
-  @spec get(Client.t(), String.t(), String.t(), String.t()) ::
+  @doc """
+  `GET /inboxes/:inbox_id/threads/:thread_id/emails/:email_id` — option
+  `include_quarantined: true` reads a held message (owner views); without it a
+  held message answers 403 `email_quarantined`.
+  """
+  @spec get(String.t(), String.t(), String.t()) ::
           {:ok, ThreadEmail.t()} | {:error, MillionSend.Error.t()}
-  def get(client \\ MillionSend.client(), inbox_id, thread_id, email_id)
-      when is_binary(inbox_id) and is_binary(thread_id) and is_binary(email_id) do
+  def get(inbox_id, thread_id, email_id) when is_binary(inbox_id),
+    do: get(MillionSend.client(), inbox_id, thread_id, email_id, [])
+
+  @spec get(Client.t() | String.t(), String.t(), String.t(), String.t() | keyword()) ::
+          {:ok, ThreadEmail.t()} | {:error, MillionSend.Error.t()}
+  def get(%Client{} = client, inbox_id, thread_id, email_id) when is_binary(inbox_id),
+    do: get(client, inbox_id, thread_id, email_id, [])
+
+  def get(inbox_id, thread_id, email_id, opts) when is_binary(inbox_id) and is_list(opts),
+    do: get(MillionSend.client(), inbox_id, thread_id, email_id, opts)
+
+  @spec get(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, ThreadEmail.t()} | {:error, MillionSend.Error.t()}
+  def get(%Client{} = client, inbox_id, thread_id, email_id, opts)
+      when is_binary(inbox_id) and is_binary(thread_id) and is_binary(email_id) and
+             is_list(opts) do
     Request.run(client,
       method: :get,
       path: path(inbox_id, thread_id, email_id),
+      query: include_quarantined(opts),
       as: &ThreadEmail.cast/1
     )
   end
@@ -704,6 +727,9 @@ defmodule MillionSend.Inboxes.ThreadEmails do
 
   defp path(inbox_id, thread_id, email_id),
     do: Threads.path(inbox_id, thread_id) <> "/emails/" <> Request.encode(email_id)
+
+  defp include_quarantined(opts),
+    do: [include_quarantined: if(opts[:include_quarantined], do: true)]
 end
 
 defmodule MillionSend.Inboxes.Draft do

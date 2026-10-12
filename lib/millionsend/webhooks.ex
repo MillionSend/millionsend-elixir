@@ -43,8 +43,9 @@ defmodule MillionSend.Webhooks do
   the inbox events: `inbox.*` (`created`, `updated`, `deleted`, `expired`),
   `inbox.thread.*` (`created`, `folder.updated`, `labels.updated`),
   `inbox.email.*` (`received`, `sent`, `quarantined`) and `inbox.draft.*`
-  (`created`, `updated`, `sent`, `deleted`). `email.received` and the inbox
-  events reach only endpoints that name them.
+  (`created`, `updated`, `sent`, `deleted`). The inbox events reach only
+  endpoints that name them: an endpoint subscribed to all events (`events: nil`)
+  skips them, though it does get `email.received`.
   """
 
   alias MillionSend.{Client, Request}
