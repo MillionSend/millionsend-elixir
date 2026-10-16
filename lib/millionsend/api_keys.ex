@@ -12,8 +12,10 @@ defmodule MillionSend.ApiKeys do
   @moduledoc """
   API keys. Input maps are sent as given: `name`, `permission`
   (`:full_access`, the default, or `:sending_access`), `domain_id`
-  (restrict a sending key to one domain) and `inbox_id` (restrict a full-access
-  key to one inbox: it reads that inbox and sends from its address only).
+  (restrict a sending key to one of the team's own domains; the `shared: true`
+  row of `MillionSend.Domains.list/2` answers 422 `"validation_error"`) and
+  `inbox_id` (restrict a full-access key to one inbox: it reads that inbox and
+  sends from its address only).
 
       {:ok, key} = MillionSend.ApiKeys.create(%{name: "ci", permission: :sending_access})
       key.token

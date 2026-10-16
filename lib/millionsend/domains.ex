@@ -15,6 +15,14 @@ defmodule MillionSend.Domains.Domain do
   => ...}` map as returned by the API. `receiving_catch_all`: on, mail to
   addresses without an inbox lands in the received list; off, those addresses
   are refused at SMTP time.
+
+  `shared` is `true` on the team's subdomain of the shared inbox domain and
+  `false` on the team's own domains (older servers don't send it, which reads
+  as `false`). Only that shared row carries `sending_mode` (`"open"`,
+  `"reply_only"` or `"receive_only"`: what its inboxes' addresses may send) and
+  `sending_mode_reason` (`"plan"` or `"instance"`: what holds sending below
+  `"open"`; `nil` under `"open"`). Both are plain strings: the API may add
+  values.
   """
   alias MillionSend.Domains.Domain.Record
   alias MillionSend.Request
@@ -32,7 +40,10 @@ defmodule MillionSend.Domains.Domain do
     :tracking_subdomain,
     :capabilities,
     :receiving_catch_all,
+    :sending_mode,
+    :sending_mode_reason,
     :deleted,
+    shared: false,
     records: []
   ]
 
@@ -55,6 +66,16 @@ defmodule MillionSend.Domains do
 
       {:ok, domain} = MillionSend.Domains.create(%{name: "acme.dev"})
       domain.records  # [%MillionSend.Domains.Domain.Record{record: "DKIM", ...}, ...]
+
+  On an instance with a shared inbox domain, the team's subdomain of it is
+  listed too (MillionSend v0.14.0 and later), as the last row and with
+  `shared: true`. It is verified, has no DNS records, and its id is the
+  `domain_id` of the team's shared inboxes. It is read-only: `update/3`,
+  `verify/2` and `remove/2` answer 403 `"forbidden"`. It sends only from its
+  inboxes' own addresses, so leave it out when picking a domain to send from:
+
+      {:ok, %{data: domains}} = MillionSend.Domains.list(limit: 100)
+      sender = Enum.find(domains, &(&1.status == "verified" and not &1.shared))
   """
 
   alias MillionSend.{Client, Request}
@@ -72,7 +93,11 @@ defmodule MillionSend.Domains do
     Request.run(client, method: :get, path: member_path(id), as: &Domain.cast/1)
   end
 
-  @doc "`GET /domains` — accepts `limit:`, `after:`, `before:`."
+  @doc """
+  `GET /domains` — the team's own domains newest first, then the shared row,
+  whatever its `created_at` (alone on the next page when the own domains
+  exactly fill one). Accepts `limit:`, `after:`, `before:`.
+  """
   @spec list(Client.t() | keyword()) ::
           {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
   def list(), do: list(MillionSend.client(), [])
@@ -96,7 +121,10 @@ defmodule MillionSend.Domains do
     Request.run(client, method: :post, path: member_path(id) <> "/verify", as: &Domain.cast/1)
   end
 
-  @doc "`PATCH /domains/:id` — tracking settings; `tracking_subdomain: nil` clears it."
+  @doc """
+  `PATCH /domains/:id` — tracking settings; `tracking_subdomain: nil` clears it.
+  The shared row answers 403 `"forbidden"`, here and on `verify/2` and `remove/2`.
+  """
   @spec update(Client.t(), String.t(), map()) ::
           {:ok, Domain.t()} | {:error, MillionSend.Error.t()}
   def update(client \\ MillionSend.client(), id, params) when is_binary(id) and is_map(params) do

@@ -101,6 +101,21 @@ defmodule MillionSend.Emails do
   @doc """
   `POST /emails`. Accepts an optional leading client and an optional
   `idempotency_key:` in the trailing options.
+
+  `subject` takes up to 998 characters. A `to`, `cc` or `bcc` address on a
+  domain that can never receive mail (`example.com`, `.test`, `.invalid`,
+  `.localhost`, a TLD that doesn't exist, …) answers 422 `"validation_error"`;
+  to test sending without emailing anyone, use
+  `success@simulator.amazonses.com`.
+
+  `from` can be an inbox's address on the shared domain while the team's
+  `sending_mode` is `"open"`: the inbox's exact `email_address` (no +tag), a
+  display name left out or equal to its `from_name`, no `reply_to`,
+  `attachments`, `headers` or `scheduled_at`, and at most 10 distinct
+  recipients across `to`, `cc` and `bcc`. A send the mode doesn't allow answers
+  403 `"inbox_send_policy"`, the team's daily cap for the shared domain 429
+  `"inbox_send_cap_reached"`, a broken rule 422 `"validation_error"`, and a key
+  restricted to a domain 403 `"restricted_api_key"`.
   """
   @spec send(map()) :: {:ok, Email.t()} | {:error, MillionSend.Error.t()}
   def send(params) when is_map(params), do: send(MillionSend.client(), params, [])
@@ -132,6 +147,12 @@ defmodule MillionSend.Emails do
   list. Permissive mode writes the valid subset and returns a
   `MillionSend.Emails.BatchResponse` whose `errors` lists the rejected items by
   request index.
+
+  Items never send from the shared domain: such an item fails a strict batch
+  with 403 `"inbox_send_policy"` (the message starts with `emails.<index>: `)
+  and lands in `errors` in permissive mode. Resending with the same
+  `idempotency_key:` returns the stored response of a batch the API already
+  accepted.
   """
   @spec send_batch([map()]) :: {:ok, [Email.t()]} | {:error, MillionSend.Error.t()}
   def send_batch(list) when is_list(list), do: send_batch(MillionSend.client(), list, [])

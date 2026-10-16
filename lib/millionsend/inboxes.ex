@@ -3,8 +3,8 @@ defmodule MillionSend.Inboxes.Inbox do
   An inbox: one address that receives mail, read by an agent (`kind: "agent"`)
   or by people (`"human"`). List items carry `id`, `name`, `email_address`,
   `from_name`, `unread`, `last_received`, `kind`, `shared` and `expires_at`.
-  `domain_id` of a shared-domain inbox is the team's shared subdomain id.
-  `remove/2` populates `id` plus `deleted`.
+  `domain_id` of a shared-domain inbox is the id of the `shared: true` row of
+  `MillionSend.Domains.list/2`. `remove/2` populates `id` plus `deleted`.
   """
   @type t :: %__MODULE__{}
   defstruct [
@@ -38,15 +38,18 @@ defmodule MillionSend.Inboxes do
   `MillionSend.Inboxes.Threads`, `MillionSend.Inboxes.ThreadEmails` and
   `MillionSend.Inboxes.Drafts`.
 
-  Input maps are sent as given: `create/2` accepts `email_address` (omit it for
-  a random address on the shared domain), `name`, `from_name`, `forwarding`,
-  `kind` (`"agent"`, the default, or `"human"`), `expires_in` (like `"24h"` or
-  `"30d"`) and `safety` (a partial `MillionSend.Inboxes.Safety` map);
-  `update/3` accepts `name`, `from_name` (`""` removes it) and `expires_in`
-  (`nil` for never).
+  Input maps are sent as given: `create/2` accepts `email_address`, `username`
+  and `domain_id` (see `create/2`), `name` (1 to 320 characters), `from_name`,
+  `forwarding`, `kind` (`"agent"`, the default, or `"human"`), `expires_in`
+  (`"1h"` to `"365d"`; omitted or `nil`, the inbox never expires) and `safety`
+  (a partial `MillionSend.Inboxes.Safety` map); `update/3` accepts `name`,
+  `from_name` (`""` removes it) and `expires_in` (`nil` for never).
 
-      {:ok, inbox} = MillionSend.Inboxes.create(%{name: "Signup bot", expires_in: "24h"})
+      {:ok, inbox} = MillionSend.Inboxes.create(%{name: "Signup bot", username: "signup-bot"})
       {:ok, inbox} = MillionSend.Inboxes.get("bot@acme.dev")
+
+  On the shared domain, an inbox unused for 90 days (no mail in or out, no API
+  call on it) is deleted, which fires `inbox.expired`, then `inbox.deleted`.
 
   Folder, verdict, kind and status values are plain strings: the API may add
   values.
@@ -55,7 +58,24 @@ defmodule MillionSend.Inboxes do
   alias MillionSend.{Client, Request}
   alias MillionSend.Inboxes.Inbox
 
-  @doc "`POST /inboxes` — 409 when the address is taken, 403 at the plan's inbox limit."
+  @doc """
+  `POST /inboxes` — 409 when the address is taken, 403 at the plan's inbox limit.
+
+  Without `email_address`, the inbox gets an address on the shared inbox
+  domain: `username@<team>.<shared domain>` with `username` (1 to 64 of
+  `a-z 0-9 . _ -`, starting and ending with a letter or digit), or a random one
+  without it. `domain_id` takes a `MillionSend.Domains.list/2` row instead of
+  `email_address`: the `shared: true` row works like leaving both out, and one
+  of the team's own verified domains needs `username`, the part before the @.
+
+  On the shared domain, reserved names (`postmaster`, `admin`, `support`,
+  `noreply`, …), a `fwd-` prefix and look-alikes of brands answer 422. A chosen
+  `username` or `from_name` there is reviewed first: 429 `"rate_limit_exceeded"`
+  means today's review budget is spent, and 503 `"name_review_unavailable"`
+  means try again after the error's `retry_after` seconds. The 503 also answers
+  every shared or forwarding create while the team's new subdomain waits for
+  its own review.
+  """
   @spec create(Client.t(), map()) :: {:ok, Inbox.t()} | {:error, MillionSend.Error.t()}
   def create(client \\ MillionSend.client(), params) when is_map(params) do
     Request.run(client, method: :post, path: "/inboxes", body: params, as: Inbox)
@@ -85,7 +105,10 @@ defmodule MillionSend.Inboxes do
     Request.run(client, method: :get, path: path(id_or_email), as: Inbox)
   end
 
-  @doc "`PATCH /inboxes/:id` — returns the updated inbox."
+  @doc """
+  `PATCH /inboxes/:id` — returns the updated inbox. A new `from_name` on the
+  shared domain is reviewed like on `create/2` (422, 429, 503).
+  """
   @spec update(Client.t(), String.t(), map()) ::
           {:ok, Inbox.t()} | {:error, MillionSend.Error.t()}
   def update(client \\ MillionSend.client(), id, params) when is_binary(id) and is_map(params) do
@@ -116,6 +139,11 @@ defmodule MillionSend.Inboxes.Safety do
 
   `update/3` changes only the keys given (`send_cap: nil` removes the cap) and
   returns every rule. Inbox-scoped keys can read the rules, never change them.
+
+  On the shared domain, `send_policy: "allowlist"` answers 422, and so does
+  `"open"` unless the team's `sending_mode` is `"open"`; `owner_addresses` don't
+  make senders trusted, and `forward_to` takes team members' sign-in addresses
+  only.
   """
 
   alias MillionSend.{Client, Inboxes, Request}
@@ -185,11 +213,17 @@ defmodule MillionSend.Inboxes.Codes do
 
   @doc """
   `GET /inboxes/:inbox_id/codes/latest` — options `from:` (an address, or a
-  domain covering its subdomains), `wait:` (0..50 seconds to wait for a code)
-  and `max_age:` (60..86400 seconds; the API defaults to 600).
+  domain covering its subdomains), `wait:` (0..50 seconds to wait for a code),
+  `max_age:` (60..86400 seconds since delivery, or since release for a code
+  released from quarantine; the API defaults to 600) and `since:` (an ISO 8601
+  string with an offset, as `DateTime.to_iso8601/1` writes it: only mail
+  received after it counts).
 
-      {:ok, %{status: "found", code: code}} =
+      {:ok, %{status: "found", code: code} = found} =
         MillionSend.Inboxes.Codes.latest(inbox_id, from: "github.com", wait: 30)
+
+      # The next sign-in waits for its own code, not the one already used
+      MillionSend.Inboxes.Codes.latest(inbox_id, since: found.received_at, wait: 30)
   """
   @spec latest(String.t()) :: {:ok, VerificationCode.t()} | {:error, MillionSend.Error.t()}
   def latest(inbox_id) when is_binary(inbox_id), do: latest(MillionSend.client(), inbox_id, [])
@@ -208,7 +242,7 @@ defmodule MillionSend.Inboxes.Codes do
     Request.run(client,
       method: :get,
       path: Inboxes.path(inbox_id) <> "/codes/latest",
-      query: [from: opts[:from], wait: opts[:wait], max_age: opts[:max_age]],
+      query: [from: opts[:from], wait: opts[:wait], max_age: opts[:max_age], since: opts[:since]],
       wait: opts[:wait],
       as: VerificationCode
     )
@@ -373,8 +407,11 @@ defmodule MillionSend.Inboxes.Thread do
   `quarantined`); list items add the latest message's `from`/`to`/`cc`/`bcc`,
   `message_count`, `has_attachment`, `has_draft` and `received_at`; search
   results add `matched_email_id` and `highlights` (a map of field to fragments
-  with `**match**` markers). `folder` is `"inbox" | "archive" | "spam" | "sent" |
-  "trash"`. `remove/3` populates `id` plus `deleted`.
+  with `**match**` markers). With `include_quarantined: true` (owner views),
+  list and search items also carry `quarantined`: the messages in quarantine
+  not yet released (mail still being screened isn't counted); `nil` without it.
+  `folder` is `"inbox" | "archive" | "spam" | "sent" | "trash"`. `remove/3`
+  populates `id` plus `deleted`.
   """
   alias MillionSend.Inboxes.Label
   alias MillionSend.Request
@@ -428,7 +465,8 @@ defmodule MillionSend.Inboxes.Threads do
   `GET /inboxes/:inbox_id/threads` — most recently active first. Options:
   `folders:` (a list; defaults to `["inbox"]`, or inbox, archive and sent with
   `labels:`), `labels:` (label ids, any-match), `read:`, `limit:`, `after:`,
-  `before:` and `include_quarantined: true` (owner views).
+  `before:` and `include_quarantined: true` (owner views; each item then
+  carries a `quarantined` count).
   """
   @spec list(String.t()) :: {:ok, MillionSend.List.t()} | {:error, MillionSend.Error.t()}
   def list(inbox_id) when is_binary(inbox_id), do: list(MillionSend.client(), inbox_id, [])
@@ -737,10 +775,11 @@ defmodule MillionSend.Inboxes.Draft do
   A draft in an inbox, including one the send rules hold (`status:
   "pending_approval"`) until a person approves it. `status` is `"draft" |
   "pending_approval" | "sent" | "rejected" | "expired"`; `approval_reasons` says
-  why it was held (e.g. `"send_policy"`, `"ramp"`, `"private_code"`). List items
-  carry `snippet` instead of `html`/`text`. A draft send's 200 sets only
-  `object`, `id`, `thread_id` and `email_id`. `remove/3` populates `id` plus
-  `deleted`.
+  why it was held (e.g. `"send_policy"`, `"ramp"`, `"private_code"`, or
+  `"reply_to_redirect"` for an agent's reply to a Reply-To at another
+  organization). List items carry `snippet` instead of `html`/`text`. A draft
+  send's 200 sets only `object`, `id`, `thread_id` and `email_id`. `remove/3`
+  populates `id` plus `deleted`.
   """
   alias MillionSend.{Client, Request}
 
@@ -805,7 +844,7 @@ defmodule MillionSend.Inboxes.Drafts do
   accepts the same content keys, where `nil` clears one; setting `html` or
   `text` replaces the whole body, so the part left out becomes `nil`.
 
-      {:ok, draft} = MillionSend.Inboxes.Drafts.create(inbox_id, %{to: "ada@example.com", text: "Hi"})
+      {:ok, draft} = MillionSend.Inboxes.Drafts.create(inbox_id, %{to: "ada@acme.dev", text: "Hi"})
 
       case MillionSend.Inboxes.Drafts.send(inbox_id, draft.id) do
         {:ok, {:sent, sent}} -> sent.email_id

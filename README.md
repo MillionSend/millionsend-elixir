@@ -86,11 +86,21 @@ silently dropped on the way out.
 No function raises for an API error — each returns `{:ok, struct}` (the inbox
 sends: `{:ok, {:sent, struct}}` or `{:ok, {:draft, draft}}`) or
 `{:error, %MillionSend.Error{}}`. The error's `name` is a stable snake_case code
-you can match on (`"validation_error"`, `"not_found"`, `"restricted_api_key"`,
-`"sending_paused"`, …). Client-side and transport failures carry
-`status_code: nil`. `Emails.send/2` and `send_batch/2` answer a 422
+you can match on (`"validation_error"`, `"not_found"`, `"forbidden"`,
+`"restricted_api_key"`, `"rate_limit_exceeded"`, `"sending_paused"`, …).
+Client-side and transport failures carry `status_code: nil`. `retry_after` is
+the response's `retry-after` header in seconds, or `nil` when it has none.
+`Emails.send/2` and `send_batch/2` answer a 422
 `"all_recipients_suppressed"` when every `to` recipient is on the suppression
 list or opted out of the send's `topic_id`.
+
+Inboxes add `"inbox_send_policy"` (403, a send the inbox's rules or the shared
+domain hold), `"inbox_send_cap_reached"` (429, the inbox's or the team's daily
+cap), `"approval_required"` (403), `"email_quarantined"` (403),
+`"email_blocked"` (410, a download of an email that carries malware),
+`"too_many_waits"` (429, too many concurrent long-polls) and
+`"name_review_unavailable"` (503, a name on the shared domain can't be reviewed
+yet).
 
 ```elixir
 case MillionSend.Emails.get(id) do
@@ -102,6 +112,47 @@ end
 
 `MillionSend.Error` is also an exception, so you can `raise`/`Exception.message/1`
 it if you prefer to bubble failures up.
+
+### Retries
+
+The SDK never retries on its own. Worth retrying after `retry_after` seconds:
+503 `"name_review_unavailable"`, 429 `"too_many_waits"`, and 429
+`"rate_limit_exceeded"` when `retry_after` is 60 or less (the per-minute
+limits). Not worth retrying in the same process: 429 `"inbox_send_cap_reached"`
+and the daily name-review budget (429 `"rate_limit_exceeded"` with a
+`retry_after` that runs to the next UTC midnight), and any 403, 404, 409 or 422.
+An unknown route answers 404 `"not_found"` (`"application_error"` from servers
+before v0.13.0).
+
+Resend a send with the same `idempotency_key:`: a batch the API already
+accepted gets its stored response back. A held draft (`{:ok, {:draft, draft}}`)
+is not a failure; never resend it. `Inboxes.create/2` takes no idempotency key:
+after a 429 or 503 nothing was created, but after a timeout a resend can create
+a second inbox. With a chosen `username`, a 409 on the resend usually means the
+first attempt succeeded: read it with `Inboxes.get/2` by its address.
+
+## Lists
+
+List functions take `limit:`, `after:` and `before:` (keyset cursors) and
+return a `MillionSend.List` with `data` and `has_more`. Lists run newest first
+(MillionSend v0.13.0 and later): `after:` takes the last id of a page and pages
+toward older items, `before:` takes the first id and pages toward newer ones,
+and `has_more` refers to that direction. Threads sort by last activity, drafts
+by last update, a thread's emails run oldest first, and labels and topics are
+not paginated.
+
+```elixir
+# Incremental sync: page toward newer items, starting from the newest id you stored
+def sync(before) do
+  {:ok, page} = MillionSend.Emails.list(before: before, limit: 100)
+  save(page.data)                         # newest first within the page
+  if page.has_more, do: sync(hd(page.data).id), else: :ok
+end
+```
+
+A cursor whose item was deleted answers 422 `"validation_error"` (404
+`"not_found"` on the inbox lists): start again without a cursor and stop at the
+ids you already have.
 
 ## Resources
 
@@ -129,6 +180,13 @@ MillionSend.Emails.remove(id)                 # DELETE /emails/:id
 MillionSend.Emails.get_insights(id)           # GET /emails/:id/insights
 ```
 
+`subject` takes up to 998 characters. A `to`, `cc` or `bcc` address on a domain
+that can never receive mail (`example.com`, `.test`, `.invalid`, `.localhost`,
+a TLD that doesn't exist, …) answers 422 `"validation_error"`; to test sending
+without emailing anyone, use `success@simulator.amazonses.com`. An inbox's
+address on the shared domain can be the `from` too, under the rules in
+[Sending from the shared domain](#sending-from-the-shared-domain).
+
 Batches take up to 100 emails. Strict validation (the default) is
 all-or-nothing and returns a plain list; `batch_validation: :permissive` sends
 the `x-batch-validation` header, writes the valid subset and returns a
@@ -142,6 +200,10 @@ the `x-batch-validation` header, writes the valid subset and returns a
   MillionSend.Emails.send_batch([a, b], batch_validation: :permissive)
 errors  # [%MillionSend.BatchError{index: 1, message: "..."}]
 ```
+
+Batch items never send from the shared domain: a strict batch fails with 403
+`"inbox_send_policy"` (the message starts with `emails.<index>: `), a
+permissive one lists the item in `errors`.
 
 ### Contacts
 
@@ -179,6 +241,8 @@ missing   # [%MillionSend.Contacts.BatchGetResponse.Missing{index: 1, email: "b@
                                     on_conflict: :upsert, batch_validation: :permissive)
 items   # [%MillionSend.Contacts.BatchResponse.Item{index: 0, id: ..., status: "created"}, ...]
 counts  # %{created: 2, updated: 0, skipped: 0, failed: 0}
+errors  # permissive only, as strict mode would answer each item:
+        # [%MillionSend.BatchError{index: 1, status_code: 422, name: "validation_error", message: ...}]
 
 # Segment membership
 MillionSend.Contacts.add_to_segment(%{email: "ada@acme.dev"}, segment_id)
@@ -234,6 +298,10 @@ MillionSend.Broadcasts.send(id, scheduled_at: "2026-09-01T09:00:00Z")  # omit to
 MillionSend.Broadcasts.cancel(id)                                      # scheduled only
 MillionSend.Broadcasts.remove(id)                                      # draft only
 ```
+
+`subject` takes up to 998 characters. A broadcast never sends from the shared
+domain: `create/2` with `send: true` and `send/3` answer 403
+`"inbox_send_policy"`.
 
 ### Segments
 
@@ -300,6 +368,9 @@ Held mail is invisible to inbox-scoped keys: a detail read answers 403
 `email_quarantined`. For full-access keys, `include_quarantined: true` lists it
 too and `quarantined: true` lists it alone.
 With `wait:` the SDK raises the HTTP receive timeout to cover the wait.
+`unread:` needs `inbox_id:` with a team key; an inbox-scoped key reads its own
+inbox. An `inbox_id:` that doesn't exist answers 404 `"not_found"` at once, even
+with `wait:`.
 
 ### Inboxes
 
@@ -312,8 +383,11 @@ status values are plain strings, so new server values never break decoding.
 ```elixir
 alias MillionSend.Inboxes
 
-{:ok, inbox} = Inboxes.create(%{name: "Signup bot", expires_in: "24h",   # no email_address: shared domain
+{:ok, inbox} = Inboxes.create(%{name: "Signup bot",       # no email_address: an address on the shared domain
+                                username: "signup-bot",   # signup-bot@<team>.<shared domain>; omit it for a random one
+                                expires_in: "24h",        # "1h" to "365d"; omitted or nil, it never expires
                                 safety: %{accept_from: "anyone"}})
+Inboxes.create(%{domain_id: domain_id, username: "orders"})  # a Domains.list/1 row: orders@ that domain
 Inboxes.list(kind: "agent")
 Inboxes.get("bot@acme.dev")                           # by id or address
 Inboxes.update(inbox.id, %{expires_in: nil})          # nil: never expires
@@ -322,6 +396,8 @@ Inboxes.remove(inbox.id)
 # Verification codes and sign-in links (links are never fetched)
 {:ok, code} = Inboxes.Codes.latest(inbox_id, from: "github.com", wait: 30)
 code.status                                           # "found" | "none" | "ambiguous" | "timeout"
+# The next sign-in: only a code received after the one already used
+Inboxes.Codes.latest(inbox_id, since: code.received_at, wait: 30)
 
 # Safety rules (inbox-scoped keys can read them, never change them)
 Inboxes.Safety.get(inbox_id)
@@ -333,6 +409,7 @@ Inboxes.Quarantine.release(inbox_id, email_id, trust_sender: true)   # also allo
 
 # Threads and their emails
 Inboxes.Threads.list(inbox_id, folders: ["inbox", "archive"], read: false)
+Inboxes.Threads.list(inbox_id, include_quarantined: true)   # owner views: a quarantined count per thread
 Inboxes.Threads.search(inbox_id, query: "invoice -draft", from: ["acme"])
 Inboxes.Threads.get(inbox_id, thread_id)
 Inboxes.Threads.update(inbox_id, thread_id, %{read: true, folder: "archive"})
@@ -349,7 +426,7 @@ Inboxes.Labels.update(inbox_id, label.id, %{color: "#FF8800"})
 Inboxes.Labels.remove(inbox_id, label.id)
 
 # Drafts, including the ones the send rules hold for approval
-{:ok, draft} = Inboxes.Drafts.create(inbox_id, %{to: "ada@example.com", subject: "Hello", text: "Hi Ada"})
+{:ok, draft} = Inboxes.Drafts.create(inbox_id, %{to: "ada@acme.dev", subject: "Hello", text: "Hi Ada"})
 Inboxes.Drafts.list(inbox_id)
 Inboxes.Drafts.get(inbox_id, draft.id)
 Inboxes.Drafts.update(inbox_id, draft.id, %{subject: nil})   # nil clears
@@ -360,9 +437,50 @@ Inboxes.Drafts.remove(inbox_id, draft.id)
 
 Reply, forward and draft send return `{:ok, {:sent, struct}}`, or
 `{:ok, {:draft, %MillionSend.Inboxes.Draft{}}}` when the inbox's send rules held
-the message for a person to approve (the API's 202). An inbox-scoped key
+the message for a person to approve (the API's 202). An agent's reply to a
+Reply-To at another organization is held that way too, with
+`"reply_to_redirect"` among its `approval_reasons`. An inbox-scoped key
 sending a pending draft gets 403 `approval_required`. Hosted agent settings
 (`/inboxes/:id/agent`) are not exposed: MillionSend runs no agent of its own.
+
+An inbox never expires unless `expires_in` says so, and its `name` takes up to
+320 characters. `domain_id` takes a `Domains.list/1` row instead of
+`email_address`: the `shared: true` row works like leaving both out, and one of
+your own domains needs a `username`.
+
+On the shared domain, an inbox unused for 90 days (no mail in or out, no API
+call on it) is deleted, which fires `inbox.expired`, then `inbox.deleted`. A
+chosen `username` or `from_name` there is reviewed first: reserved names
+(`postmaster`, `admin`, `support`, `noreply`, …), a `fwd-` prefix and
+look-alikes of brands answer 422, a username in use 409, and 429 means today's
+review budget is spent. 503 `"name_review_unavailable"` means try again after
+`retry_after` seconds: the review is down, or the team's new subdomain still
+waits for its own, and then every shared or forwarding create gets it. Safety
+rules differ there too: `send_policy: "allowlist"` answers 422, and so does
+`"open"` unless the team's `sending_mode` is `"open"`; `owner_addresses` don't
+make senders trusted; `forward_to` takes team members only.
+
+#### Sending from the shared domain
+
+What the team's shared addresses may send is the `sending_mode` of the
+`shared: true` row of `Domains.list/1`: `"open"` starts conversations,
+`"reply_only"` only answers inside a thread to its own correspondents, and
+`"receive_only"` sends nothing. The same answers come back from
+`Emails.send/2`, replies, forwards and drafts:
+
+- 403 `"inbox_send_policy"`: the mode doesn't allow this send (or the inbox's
+  name looks like a brand, which only replies even under `"open"`);
+- 429 `"inbox_send_cap_reached"`: the team's daily cap for the shared domain,
+  with a `retry_after` that runs to the next UTC midnight;
+- 422 `"validation_error"`: more than 10 distinct recipients across `to`, `cc`
+  and `bcc`.
+
+`Emails.send/2` takes a shared address in `"open"` mode only: the inbox's exact
+`email_address` (no +tag), a display name left out or equal to its
+`from_name`, and no `reply_to`, `attachments`, `headers` or `scheduled_at`. A
+key restricted to a domain gets 403 `"restricted_api_key"`. Batch items and
+broadcasts never send from the shared domain. Match on `name` and
+`status_code`; the messages may change.
 
 ### Domains
 
@@ -381,6 +499,26 @@ MillionSend.Domains.remove(id)
 `receiving_catch_all`: on, mail to addresses without an inbox lands in the
 received list; off, those addresses are refused at SMTP time.
 
+On an instance with a shared inbox domain, the team's subdomain of it is the
+last row of `Domains.list/1` (`shared: true`; MillionSend v0.14.0 and later).
+It is verified, has no DNS records, and its id is the `domain_id` of the team's
+shared inboxes. Its `sending_mode` (`"open"`, `"reply_only"` or
+`"receive_only"`) says what those inboxes may send, and `sending_mode_reason`
+(`"plan"` or `"instance"`, `nil` under `"open"`) why it is held below
+`"open"`. It is read-only: `update/3`, `verify/2` and `remove/2` answer 403
+`"forbidden"`, and an API key can't be restricted to it. It comes after every
+own domain whatever its `created_at`, alone on the next page when they exactly
+fill one. A team whose new subdomain still waits for its name review has no
+such row yet. Older servers send no `shared`, which reads as `false`.
+
+It sends only from its inboxes' own addresses, so leave it out when picking a
+domain to send from:
+
+```elixir
+{:ok, %{data: domains}} = MillionSend.Domains.list(limit: 100)
+sender = Enum.find(domains, &(&1.status == "verified" and not &1.shared))
+```
+
 ### API keys
 
 ```elixir
@@ -392,6 +530,9 @@ MillionSend.ApiKeys.remove(id)
 # A key restricted to one inbox: it reads that inbox and sends from its address only
 MillionSend.ApiKeys.create(%{name: "support-agent", inbox_id: inbox_id})
 ```
+
+`domain_id` takes one of your own domains: the `shared: true` row of
+`Domains.list/1` answers 422 `"validation_error"`.
 
 ### Webhooks
 
@@ -424,7 +565,8 @@ The inbox events (`inbox.created|updated|deleted|expired`,
 reach only endpoints that name them; an endpoint subscribed to all events skips
 them, though it does get `email.received`. `inbox_ids: [...]` narrows the inbox
 events and `email.received` to some inboxes; `inbox_ids: nil` on update removes
-the filter.
+the filter. Inbox events from sends made in the dashboard carry
+`data.source: "dashboard"`.
 
 ### Templates
 
@@ -489,8 +631,24 @@ Module names, function names and payloads match. Notes:
 - **Segment filters, deliverability insights and usage** are MillionSend
   extensions with no Resend counterpart, as are, on received mail and inboxes,
   the long-poll `wait:`, received-mail reply/forward/remove, inbox safety, codes,
-  quarantine, draft reject and the extension fields.
+  quarantine, draft reject, the `username` and `domain_id` of `Inboxes.create/2`
+  and the extension fields. So is `MillionSend.Error`'s `retry_after`.
 - `Templates.publish/2` is a no-op: templates are published on every write.
+
+## MillionSend versions
+
+Each feature needs this MillionSend version or later. Older servers answer 404
+on paths they lack and ignore options they don't know, so an inbox created with
+`username` or `domain_id` on one can get another address: check its
+`email_address`.
+
+| MillionSend | Features |
+|---|---|
+| v0.10.0 | `MillionSend.Inboxes`; the receiving long-poll, inbox filters, reply and forward |
+| v0.11.0 | 422 for recipients that can never receive mail; a batch `idempotency_key` replayed before validation |
+| v0.12.0 | `username`; inboxes that never expire by default; sends from the shared domain under its mode; `"name_review_unavailable"`; `status_code` and `name` on contacts batch errors |
+| v0.13.0 | newest-first lists; `since:` on `Inboxes.Codes.latest/3`; `quarantined` on thread items; inbox names up to 320 characters; `unread:` with an inbox-scoped key; a JSON 404 for unknown routes |
+| v0.14.0 | `shared`, `sending_mode` and `sending_mode_reason` on domains; `domain_id` on `Inboxes.create/2`; `subject` up to 998 characters |
 
 ## Testing against a real instance
 

@@ -150,6 +150,17 @@ defmodule MillionSend.InboxesTest do
       assert req_query() == "quarantined=true"
     end
 
+    test "an unreachable inbox_id answers not_found, even with wait", %{client: c} do
+      stub_response(404, %{
+        "statusCode" => 404,
+        "name" => "not_found",
+        "message" => "Inbox not found."
+      })
+
+      assert {:error, %MillionSend.Error{name: "not_found", status_code: 404}} =
+               Receiving.list(c, inbox_id: "i9", wait: 30)
+    end
+
     test "get decodes the extension fields", %{client: c} do
       stub_json(@received)
 
@@ -279,7 +290,7 @@ defmodule MillionSend.InboxesTest do
     "created_at" => "2026-10-12T10:00:00.000Z",
     "kind" => "agent",
     "shared" => true,
-    "expires_at" => "2026-10-13T10:00:00.000Z",
+    "expires_at" => nil,
     "quarantined" => 3,
     "pending_approval" => 1
   }
@@ -330,6 +341,38 @@ defmodule MillionSend.InboxesTest do
       stub_json(%{"object" => "inbox", "id" => "i1", "deleted" => true})
       assert {:ok, %Inbox{deleted: true}} = Inboxes.remove(c, "i1")
       assert req_method() == :delete and req_path() == "/inboxes/i1"
+    end
+
+    test "create takes a username and a domain_id", %{client: c} do
+      stub_response(201, @inbox)
+
+      assert {:ok, %Inbox{}} = Inboxes.create(c, %{username: "ada"})
+      assert req_body() == %{"username" => "ada"}
+
+      assert {:ok, _} = Inboxes.create(c, %{domain_id: "sd1"})
+      assert req_body() == %{"domain_id" => "sd1"}
+
+      assert {:ok, _} = Inboxes.create(c, %{domain_id: "d1", username: "support"})
+      assert req_body() == %{"domain_id" => "d1", "username" => "support"}
+    end
+
+    test "a name review outage answers name_review_unavailable with retry_after", %{client: c} do
+      stub_response(
+        503,
+        %{
+          "statusCode" => 503,
+          "name" => "name_review_unavailable",
+          "message" => "Names on the shared domain can't be reviewed right now"
+        },
+        [{"retry-after", "60"}]
+      )
+
+      assert {:error,
+              %MillionSend.Error{
+                name: "name_review_unavailable",
+                status_code: 503,
+                retry_after: 60
+              }} = Inboxes.create(c, %{username: "ada"})
     end
 
     test "safety get and update", %{client: c} do
@@ -387,6 +430,9 @@ defmodule MillionSend.InboxesTest do
 
       assert {:ok, _} = Inboxes.Codes.latest(c, "i1")
       assert req_query() == nil
+
+      assert {:ok, _} = Inboxes.Codes.latest(c, "i1", since: "2026-10-16T12:00:00.000Z")
+      assert req_query() == "since=2026-10-16T12%3A00%3A00.000Z"
 
       stub_json(%{
         "object" => "list",
@@ -544,6 +590,20 @@ defmodule MillionSend.InboxesTest do
       stub_json(%{"object" => "inbox_thread", "id" => "t1", "deleted" => false})
       assert {:ok, %Thread{deleted: false}} = Inboxes.Threads.remove(c, "i1", "t1")
       assert req_method() == :delete and req_path() == "/inboxes/i1/threads/t1"
+    end
+
+    test "thread list and search items carry quarantined when asked", %{client: c} do
+      stub_json(%{
+        "object" => "list",
+        "has_more" => false,
+        "data" => [%{"id" => "t1", "quarantined" => 2}, %{"id" => "t2"}]
+      })
+
+      assert {:ok, %{data: [%Thread{quarantined: 2}, %Thread{quarantined: nil}]}} =
+               Inboxes.Threads.list(c, "i1", include_quarantined: true)
+
+      assert {:ok, %{data: [%Thread{quarantined: 2}, %Thread{quarantined: nil}]}} =
+               Inboxes.Threads.search(c, "i1", include_quarantined: true)
     end
 
     test "thread emails list/get/reply/forward", %{client: c} do

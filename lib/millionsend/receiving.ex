@@ -147,9 +147,13 @@ defmodule MillionSend.Receiving do
   `before:`, `wait:` (0..50 seconds), `since:` (an ISO 8601 string with an
   offset, as `DateTime.to_iso8601/1` writes it), `inbox_id:`, `to:` (an address
   the message was delivered to), `from:` (an address, or a domain covering its
-  subdomains), `subject_contains:`, `unread:` (needs `inbox_id:`),
+  subdomains), `subject_contains:`, `unread:` (read state in one inbox: a team
+  key needs `inbox_id:`, an inbox-scoped key reads its own inbox),
   `include_quarantined: true` (held mail too) and `quarantined: true` (held mail
   only); the last two need a full-access key not scoped to an inbox.
+
+  An `inbox_id:` that doesn't exist answers 404 `"not_found"` at once, even
+  with `wait:`.
   """
   @spec list(Client.t() | keyword()) :: {:ok, EmailList.t()} | {:error, MillionSend.Error.t()}
   def list(), do: list(MillionSend.client(), [])
