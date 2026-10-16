@@ -6,6 +6,15 @@ defmodule MillionSend.ClientTest do
 
   alias MillionSend.Test.Stub
 
+  defmodule NameReviewAdapter do
+    @moduledoc false
+    # A Req adapter answering every request the way a name review outage does.
+    def run(request) do
+      body = ~s({"statusCode":503,"name":"name_review_unavailable","message":"Later"})
+      {request, Req.Response.new(status: 503, headers: %{"retry-after" => ["300"]}, body: body)}
+    end
+  end
+
   describe "construction" do
     test "raises without an api key and without the env var" do
       prev = System.get_env("MILLIONSEND_API_KEY")
@@ -233,6 +242,52 @@ defmodule MillionSend.ClientTest do
       stub_json(%{"object" => "inbox_label", "id" => "...", "deleted" => true})
       assert {:ok, _} = MillionSend.Inboxes.Labels.remove(client(), "ib1", "...")
       assert req_path() == "/inboxes/ib1/labels/..."
+    end
+
+    test "an error carries retry-after in whole seconds, or nil" do
+      error = %{"statusCode" => 429, "name" => "rate_limit_exceeded", "message" => "Slow down"}
+
+      stub_response(429, error, [{"Retry-After", "30"}])
+
+      assert {:error, %MillionSend.Error{retry_after: 30}} =
+               MillionSend.Emails.get(client(), "e1")
+
+      stub_response(429, error)
+
+      assert {:error, %MillionSend.Error{retry_after: nil}} =
+               MillionSend.Emails.get(client(), "e1")
+
+      stub_response(429, error, [{"retry-after", "Fri, 16 Oct 2026 12:00:00 GMT"}])
+
+      assert {:error, %MillionSend.Error{retry_after: nil}} =
+               MillionSend.Emails.get(client(), "e1")
+    end
+
+    test "the Req HTTP client hands the response headers over" do
+      prev = Req.default_options()
+      on_exit(fn -> Req.default_options(prev) end)
+
+      Req.default_options(adapter: NameReviewAdapter)
+      c = client(http_client: MillionSend.HTTP.Req)
+
+      assert {:error, %MillionSend.Error{status_code: 503, retry_after: 300}} =
+               MillionSend.Inboxes.create(c, %{username: "signup-bot"})
+    end
+
+    test "an unknown route answers not_found, or application_error from older servers" do
+      stub_response(404, %{
+        "statusCode" => 404,
+        "name" => "not_found",
+        "message" => "The requested endpoint does not exist."
+      })
+
+      assert {:error, %MillionSend.Error{name: "not_found", status_code: 404}} =
+               MillionSend.Emails.get(client(), "e1")
+
+      stub_response(404, "Not Found")
+
+      assert {:error, %MillionSend.Error{name: "application_error", status_code: 404}} =
+               MillionSend.Emails.get(client(), "e1")
     end
 
     test "falls back to a generic error when the body is not the canonical shape" do

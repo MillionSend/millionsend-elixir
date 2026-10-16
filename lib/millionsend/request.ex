@@ -45,8 +45,11 @@ defmodule MillionSend.Request do
       put_timeout(%{method: method, url: url, headers: headers, body: encoded}, opts[:wait])
 
     case client.http_client.request(request) do
-      {:ok, %{status: status, body: raw}} -> handle(status, raw, as)
-      {:error, reason} -> {:error, Error.transport(reason)}
+      {:ok, %{status: status, body: raw} = response} ->
+        handle(status, raw, Map.get(response, :headers, []), as)
+
+      {:error, reason} ->
+        {:error, Error.transport(reason)}
     end
   end
 
@@ -73,11 +76,11 @@ defmodule MillionSend.Request do
     struct(module, data)
   end
 
-  defp handle(status, raw, as) do
+  defp handle(status, raw, headers, as) do
     parsed = decode(raw)
 
     cond do
-      status not in 200..299 -> {:error, Error.from_body(parsed, status)}
+      status not in 200..299 -> {:error, Error.from_body(parsed, status, headers)}
       # A two-arity cast also gets the status: the inbox sends answer 202 with a held draft.
       is_function(as, 2) and is_map(parsed) -> {:ok, as.(parsed, status)}
       true -> {:ok, cast(parsed, as)}

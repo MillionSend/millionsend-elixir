@@ -17,7 +17,14 @@ defmodule MillionSend.HTTP do
           optional(:receive_timeout) => pos_integer()
         }
 
-  @type response :: %{status: non_neg_integer(), body: binary() | nil}
+  @typedoc """
+  `headers` is optional; without it errors carry `retry_after: nil`.
+  """
+  @type response :: %{
+          required(:status) => non_neg_integer(),
+          required(:body) => binary() | nil,
+          optional(:headers) => [{String.t(), String.t()}]
+        }
 
   @callback request(request()) :: {:ok, response()} | {:error, term()}
 end
@@ -38,8 +45,13 @@ defmodule MillionSend.HTTP.Req do
              retry: false
            ] ++ Map.to_list(Map.take(request, [:receive_timeout]))
          ) do
-      {:ok, %Req.Response{status: status, body: resp_body}} ->
-        {:ok, %{status: status, body: resp_body}}
+      {:ok, %Req.Response{status: status, headers: resp_headers, body: resp_body}} ->
+        # Req holds headers as a map of value lists, or as a list of pairs under
+        # its legacy_headers_as_lists config; List.wrap reads both.
+        headers =
+          for {name, values} <- resp_headers, value <- List.wrap(values), do: {name, value}
+
+        {:ok, %{status: status, body: resp_body, headers: headers}}
 
       {:error, reason} ->
         {:error, reason}
