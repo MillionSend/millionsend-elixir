@@ -365,7 +365,15 @@ defmodule MillionSend.ResourcesTest do
       assert req_headers()["x-batch-validation"] == "permissive"
       assert req_headers()["idempotency-key"] == "batch-2"
       assert [%MillionSend.Emails.Email{id: "1"}] = response.data
-      assert [%MillionSend.BatchError{index: 1, message: "to: invalid email"}] = response.errors
+
+      assert [
+               %MillionSend.BatchError{
+                 index: 1,
+                 message: "to: invalid email",
+                 status_code: nil,
+                 name: nil
+               }
+             ] = response.errors
     end
   end
 
@@ -408,7 +416,14 @@ defmodule MillionSend.ResourcesTest do
           %{"object" => "contact", "index" => 2, "id" => "c2", "status" => "skipped"}
         ],
         "counts" => %{"created" => 1, "updated" => 0, "skipped" => 1, "failed" => 1},
-        "errors" => [%{"index" => 1, "message" => "email: invalid"}]
+        "errors" => [
+          %{
+            "index" => 1,
+            "statusCode" => 422,
+            "name" => "validation_error",
+            "message" => "email: invalid"
+          }
+        ]
       })
 
       assert {:ok, %MillionSend.Contacts.BatchResponse{} = response} =
@@ -435,7 +450,15 @@ defmodule MillionSend.ResourcesTest do
              ] = response.data
 
       assert response.counts == %{created: 1, updated: 0, skipped: 1, failed: 1}
-      assert [%MillionSend.BatchError{index: 1, message: "email: invalid"}] = response.errors
+
+      assert [
+               %MillionSend.BatchError{
+                 index: 1,
+                 status_code: 422,
+                 name: "validation_error",
+                 message: "email: invalid"
+               }
+             ] = response.errors
     end
 
     test "create_batch defaults send no query and no header", %{client: c} do
@@ -1037,6 +1060,76 @@ defmodule MillionSend.ResourcesTest do
                MillionSend.Domains.remove(c, "d1")
 
       assert req_method() == :delete and req_path() == "/domains/d1"
+    end
+
+    test "the shared row decodes in full; other rows read shared as false", %{client: c} do
+      shared = %{
+        "object" => "domain",
+        "id" => "sd1",
+        "name" => "acme.agents.dev",
+        "status" => "verified",
+        "created_at" => "2026-10-12T10:00:00.000Z",
+        "region" => "us-east-1",
+        "open_tracking" => false,
+        "click_tracking" => false,
+        "tracking_subdomain" => nil,
+        "capabilities" => %{"sending" => "enabled", "receiving" => "enabled"},
+        "receiving_catch_all" => false,
+        "shared" => true,
+        "sending_mode" => "reply_only",
+        "sending_mode_reason" => "plan",
+        "records" => []
+      }
+
+      stub_json(shared)
+
+      assert {:ok,
+              %MillionSend.Domains.Domain{
+                id: "sd1",
+                name: "acme.agents.dev",
+                status: "verified",
+                tracking_subdomain: nil,
+                capabilities: %{"sending" => "enabled", "receiving" => "enabled"},
+                receiving_catch_all: false,
+                shared: true,
+                sending_mode: "reply_only",
+                sending_mode_reason: "plan",
+                records: []
+              }} = MillionSend.Domains.get(c, "sd1")
+
+      stub_json(%{
+        "object" => "list",
+        "has_more" => false,
+        "data" => [
+          %{"id" => "d2", "name" => "acme.dev", "shared" => false},
+          %{"id" => "d1", "name" => "mail.acme.dev"},
+          shared
+          |> Map.drop(["object", "records"])
+          |> Map.merge(%{
+            "sending_mode" => "a_mode_from_a_newer_server",
+            "sending_mode_reason" => nil
+          })
+        ]
+      })
+
+      assert {:ok, %MillionSend.List{data: [own, older, row]}} = MillionSend.Domains.list(c)
+      assert %{shared: false, sending_mode: nil, sending_mode_reason: nil} = own
+      assert older.shared == false
+
+      assert %{shared: true, sending_mode: "a_mode_from_a_newer_server", sending_mode_reason: nil} =
+               row
+    end
+
+    test "the shared row is read-only", %{client: c} do
+      stub_response(403, %{
+        "statusCode" => 403,
+        "name" => "forbidden",
+        "message" =>
+          "acme.agents.dev is your team's subdomain of the shared domain: it can't be changed or deleted"
+      })
+
+      assert {:error, %MillionSend.Error{name: "forbidden", status_code: 403}} =
+               MillionSend.Domains.update(c, "sd1", %{open_tracking: true})
     end
   end
 

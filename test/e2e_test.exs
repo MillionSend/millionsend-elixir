@@ -15,7 +15,8 @@ if System.get_env("MILLIONSEND_API_KEY") do
     end
 
     test "creates, reads, updates and deletes a contact", %{client: client} do
-      email = "sdk-e2e-#{System.unique_integer([:positive])}@example.com"
+      # The API refuses contacts on domains that can never receive mail, example.com included.
+      email = "success+sdk-e2e-#{System.system_time(:millisecond)}@simulator.amazonses.com"
 
       assert {:ok, created} =
                MillionSend.Contacts.create(client, %{email: email, first_name: "Ada"})

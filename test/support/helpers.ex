@@ -10,13 +10,14 @@ defmodule MillionSend.Test.Helpers do
   end
 
   @doc "Queue the next response. `body` may be a JSON string or a term to encode."
-  def stub_response(status, body) when is_binary(body) do
-    Process.put(:ms_response, {:ok, %{status: status, body: body}})
+  def stub_response(status, body, headers \\ [])
+
+  def stub_response(status, body, headers) when is_binary(body) do
+    Process.put(:ms_response, {:ok, %{status: status, body: body, headers: headers}})
   end
 
-  def stub_response(status, body) do
-    Process.put(:ms_response, {:ok, %{status: status, body: Jason.encode!(body)}})
-  end
+  def stub_response(status, body, headers),
+    do: stub_response(status, Jason.encode!(body), headers)
 
   def stub_json(body), do: stub_response(200, body)
 

@@ -44,7 +44,11 @@ defmodule MillionSend.Broadcasts do
   alias MillionSend.{Client, Request}
   alias MillionSend.Broadcasts.Broadcast
 
-  @doc "`POST /broadcasts`"
+  @doc """
+  `POST /broadcasts` — `subject` takes up to 998 characters. A broadcast never
+  sends from the shared domain: `send: true` here, and `send/3`, answer 403
+  `"inbox_send_policy"`.
+  """
   @spec create(Client.t(), map()) :: {:ok, Broadcast.t()} | {:error, MillionSend.Error.t()}
   def create(client \\ MillionSend.client(), params) when is_map(params) do
     Request.run(client, method: :post, path: "/broadcasts", body: params, as: Broadcast)

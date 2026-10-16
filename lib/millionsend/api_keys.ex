@@ -1,17 +1,21 @@
 defmodule MillionSend.ApiKeys.ApiKey do
   @moduledoc """
   An API key. `token` is returned only by `create/2` — store it, it cannot be
-  fetched again. `remove/2` populates `id` plus `deleted`.
+  fetched again. `inbox_id` is set for a key restricted to one inbox.
+  `remove/2` populates `id` plus `deleted`.
   """
   @type t :: %__MODULE__{}
-  defstruct [:object, :id, :name, :token, :created_at, :last_used_at, :deleted]
+  defstruct [:object, :id, :name, :token, :created_at, :last_used_at, :inbox_id, :deleted]
 end
 
 defmodule MillionSend.ApiKeys do
   @moduledoc """
   API keys. Input maps are sent as given: `name`, `permission`
-  (`:full_access`, the default, or `:sending_access`) and `domain_id`
-  (restrict a sending key to one domain).
+  (`:full_access`, the default, or `:sending_access`), `domain_id`
+  (restrict a sending key to one of the team's own domains; the `shared: true`
+  row of `MillionSend.Domains.list/2` answers 422 `"validation_error"`) and
+  `inbox_id` (restrict a full-access key to one inbox: it reads that inbox and
+  sends from its address only).
 
       {:ok, key} = MillionSend.ApiKeys.create(%{name: "ci", permission: :sending_access})
       key.token

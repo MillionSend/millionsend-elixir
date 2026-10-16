@@ -12,6 +12,25 @@ defmodule MillionSend.Request do
 
   @spec run(Client.t(), keyword()) :: {:ok, term()} | {:error, Error.t()}
   def run(%Client{} = client, opts) do
+    if dot_segment?(Keyword.fetch!(opts, :path)) do
+      {:error,
+       %Error{
+         name: "validation_error",
+         message: ~s(An id in the request path is empty, "." or ".."),
+         status_code: nil
+       }}
+    else
+      send_request(client, opts)
+    end
+  end
+
+  # URL normalization resolves an empty, "." or ".." segment away, so an id
+  # such as ".." would send the request to another resource
+  # (DELETE /inboxes/{id}/labels/.. deletes the inbox).
+  defp dot_segment?(path),
+    do: path |> String.split("/") |> tl() |> Enum.any?(&(&1 in ["", ".", ".."]))
+
+  defp send_request(client, opts) do
     method = Keyword.fetch!(opts, :method)
     path = Keyword.fetch!(opts, :path)
     body = Keyword.get(opts, :body)
@@ -22,11 +41,24 @@ defmodule MillionSend.Request do
     encoded = if is_nil(body), do: nil, else: Jason.encode!(body)
     headers = headers(client, method, encoded, opts)
 
-    case client.http_client.request(%{method: method, url: url, headers: headers, body: encoded}) do
-      {:ok, %{status: status, body: raw}} -> handle(status, raw, as)
-      {:error, reason} -> {:error, Error.transport(reason)}
+    request =
+      put_timeout(%{method: method, url: url, headers: headers, body: encoded}, opts[:wait])
+
+    case client.http_client.request(request) do
+      {:ok, %{status: status, body: raw} = response} ->
+        handle(status, raw, Map.get(response, :headers, []), as)
+
+      {:error, reason} ->
+        {:error, Error.transport(reason)}
     end
   end
+
+  # A long-poll holds the response for up to `wait` seconds, past the HTTP
+  # client's default receive timeout (15 s for Req).
+  defp put_timeout(request, wait) when is_integer(wait) and wait > 0,
+    do: Map.put(request, :receive_timeout, (wait + 15) * 1_000)
+
+  defp put_timeout(request, _wait), do: request
 
   @doc "Percent-encodes a single path segment the way `encodeURIComponent` does."
   @spec encode(term()) :: String.t()
@@ -44,13 +76,14 @@ defmodule MillionSend.Request do
     struct(module, data)
   end
 
-  defp handle(status, raw, as) do
+  defp handle(status, raw, headers, as) do
     parsed = decode(raw)
 
-    if status in 200..299 do
-      {:ok, cast(parsed, as)}
-    else
-      {:error, Error.from_body(parsed, status)}
+    cond do
+      status not in 200..299 -> {:error, Error.from_body(parsed, status, headers)}
+      # A two-arity cast also gets the status: the inbox sends answer 202 with a held draft.
+      is_function(as, 2) and is_map(parsed) -> {:ok, as.(parsed, status)}
+      true -> {:ok, cast(parsed, as)}
     end
   end
 
