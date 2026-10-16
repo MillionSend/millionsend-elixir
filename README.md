@@ -29,7 +29,7 @@ config :millionsend, MillionSend.Client,
 ```elixir
 case MillionSend.Emails.send(%{
        from: "Acme <onboarding@acme.dev>",
-       to: "delivered@resend.dev",
+       to: "success@simulator.amazonses.com",
        subject: "Hello from MillionSend",
        html: "<strong>It works!</strong>"
      }) do

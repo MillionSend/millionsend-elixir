@@ -84,7 +84,7 @@ defmodule MillionSend.Emails do
 
       MillionSend.Emails.send(%{
         from: "Acme <onboarding@acme.dev>",
-        to: "delivered@resend.dev",
+        to: "success@simulator.amazonses.com",
         subject: "Hello",
         html: "<strong>it works</strong>",
         tags: [%{name: "campaign", value: "welcome"}],
