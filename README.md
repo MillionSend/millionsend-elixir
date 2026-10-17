@@ -103,7 +103,9 @@ cap), `"approval_required"` (403), `"email_quarantined"` (403),
 `"email_blocked"` (410, a download of an email that carries malware),
 `"too_many_waits"` (429, too many concurrent long-polls) and
 `"name_review_unavailable"` (503, a name on the shared domain can't be reviewed
-yet).
+yet). A quarantine release adds `"trust_not_allowed"` (403) and
+`"held_by_screening"` (409), see [Inboxes](#inboxes); it answers `"forbidden"`
+(403) and `"screening_unavailable"` (503) only to MCP clients.
 
 ```elixir
 case MillionSend.Emails.get(id) do
@@ -408,7 +410,7 @@ Inboxes.Safety.update(inbox_id, %{accept_from: "allowlist", allowlist: ["*@partn
 
 # Quarantine: held mail is kept and listed until a person releases it
 Inboxes.Quarantine.list(inbox_id)
-Inboxes.Quarantine.release(inbox_id, email_id, trust_sender: true)   # also allowlists the sender
+Inboxes.Quarantine.release(inbox_id, email_id)
 
 # Threads and their emails
 Inboxes.Threads.list(inbox_id, folders: ["inbox", "archive"], read: false)
@@ -445,6 +447,15 @@ Reply-To at another organization is held that way too, with
 `"reply_to_redirect"` among its `approval_reasons`. An inbox-scoped key
 sending a pending draft gets 403 `approval_required`. Hosted agent settings
 (`/inboxes/:id/agent`) are not exposed: MillionSend runs no agent of its own.
+
+On an agent inbox with `screening` on, mail held before screening ran
+(`"not_allowlisted"`, `"unauthenticated_sender"`, `"failed_auth"`) is screened
+at release when screening can run: if it finds prompt injection or phishing,
+the email stays held as `"injection"` or `"phishing"` (409
+`"held_by_screening"`). `trust_sender: true` also adds the sender to the
+allowlist, only for mail held as `"not_allowlisted"` from a sender that
+authenticated (`sender_trust: "external"`); anything else answers 403
+`"trust_not_allowed"`.
 
 An inbox never expires unless `expires_in` says so, and its `name` takes up to
 320 characters. `domain_id` takes a `Domains.list/1` row instead of
@@ -661,6 +672,7 @@ on paths they lack and ignore options they don't know, so an inbox created with
 | v0.13.0 | newest-first lists; `since:` on `Inboxes.Codes.latest/3`; `quarantined` on thread items; inbox names up to 320 characters; `unread:` with an inbox-scoped key; a JSON 404 for unknown routes |
 | v0.14.0 | `shared`, `sending_mode` and `sending_mode_reason` on domains; `domain_id` on `Inboxes.create/2`; `subject` up to 998 characters |
 | v0.15.1 | `email.scheduled`, `email.failed` and `email.suppressed` webhook events; `source_id` on `suppression.added` and `suppression.removed`; the `suppressed` email kept for an all-suppressed `Emails.send/2` |
+| v0.16.0 | release rules: `trust_sender:` only for a `"not_allowlisted"` hold from an authenticated sender (`"trust_not_allowed"`); screening at release (`"held_by_screening"`) |
 
 ## Testing against a real instance
 
