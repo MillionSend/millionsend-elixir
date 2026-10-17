@@ -35,17 +35,22 @@ defmodule MillionSend.Webhooks do
         events: ["email.delivered", "email.bounced"]
       })
 
-  Subscribable events: `email.*` (`sent`, `delivered`, `delivery_delayed`,
-  `bounced`, `complained`, `opened`, `clicked`), `deliverability.*` (`warning`,
-  `paused`), `quota.*` (`warning`, `reached`, `paused`), `contact.*` (`created`,
-  `updated`, `deleted`, `unsubscribed`, `resubscribed`, `topic_opt_in`,
-  `topic_opt_out`), `suppression.*` (`added`, `removed`), `email.received`, and
+  Subscribable events: `email.*` (`scheduled`, `sent`, `delivered`,
+  `delivery_delayed`, `bounced`, `complained`, `failed`, `suppressed`, `opened`,
+  `clicked`, `prefetched`, `received`), `deliverability.*` (`warning`,
+  `paused`), `quota.*` (`warning`, `reached`, `paused`), `contact.*`
+  (`created`, `updated`, `deleted`, `unsubscribed`, `resubscribed`,
+  `topic_opt_in`, `topic_opt_out`), `suppression.*` (`added`, `removed`), and
   the inbox events: `inbox.*` (`created`, `updated`, `deleted`, `expired`),
   `inbox.thread.*` (`created`, `folder.updated`, `labels.updated`),
   `inbox.email.*` (`received`, `sent`, `quarantined`) and `inbox.draft.*`
-  (`created`, `updated`, `sent`, `deleted`). The inbox events reach only
-  endpoints that name them: an endpoint subscribed to all events (`events: nil`)
-  skips them, though it does get `email.received`.
+  (`created`, `updated`, `sent`, `deleted`). `email.prefetched` and the inbox
+  events reach only endpoints that name them: an endpoint subscribed to all
+  events (`events: nil`) skips them, though it does get `email.received`.
+
+  `email.scheduled`, `email.failed` and `email.suppressed` need MillionSend
+  v0.15.1 or later; an older server refuses a webhook naming them with 422
+  `"validation_error"`.
   """
 
   alias MillionSend.{Client, Request}
