@@ -559,6 +559,12 @@ Events include `email.*`, `deliverability.*`, `quota.*`, `contact.*`
 (`created`, `updated`, `deleted`, `unsubscribed`, `resubscribed`,
 `topic_opt_in`, `topic_opt_out`) and `suppression.*` (`added`, `removed`).
 
+`email.scheduled`, `email.failed` and `email.suppressed` need MillionSend
+v0.15.1 or later; an older server refuses a webhook naming them with 422
+`"validation_error"`. `email.failed` says why in `data.failed.reason`, and
+`email.suppressed` in `data.suppressed` (`type`, `message`, `reason`); treat
+their values as open sets.
+
 The inbox events (`inbox.created|updated|deleted|expired`,
 `inbox.thread.created|folder.updated|labels.updated`,
 `inbox.email.received|sent|quarantined`, `inbox.draft.created|updated|sent|deleted`)
@@ -649,6 +655,7 @@ on paths they lack and ignore options they don't know, so an inbox created with
 | v0.12.0 | `username`; inboxes that never expire by default; sends from the shared domain under its mode; `"name_review_unavailable"`; `status_code` and `name` on contacts batch errors |
 | v0.13.0 | newest-first lists; `since:` on `Inboxes.Codes.latest/3`; `quarantined` on thread items; inbox names up to 320 characters; `unread:` with an inbox-scoped key; a JSON 404 for unknown routes |
 | v0.14.0 | `shared`, `sending_mode` and `sending_mode_reason` on domains; `domain_id` on `Inboxes.create/2`; `subject` up to 998 characters |
+| v0.15.1 | `email.scheduled`, `email.failed` and `email.suppressed` webhook events; `source_id` on `suppression.added` and `suppression.removed` |
 
 ## Testing against a real instance
 
