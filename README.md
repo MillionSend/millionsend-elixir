@@ -92,7 +92,10 @@ Client-side and transport failures carry `status_code: nil`. `retry_after` is
 the response's `retry-after` header in seconds, or `nil` when it has none.
 `Emails.send/2` and `send_batch/2` answer a 422
 `"all_recipients_suppressed"` when every `to` recipient is on the suppression
-list or opted out of the send's `topic_id`.
+list or opted out of the send's `topic_id`. When the suppression list alone
+empties `to`, `send/2` also keeps a metadata-only `suppressed` email, which
+fires `email.suppressed`; each retry keeps another, even with the same
+`idempotency_key:`.
 
 Inboxes add `"inbox_send_policy"` (403, a send the inbox's rules or the shared
 domain hold), `"inbox_send_cap_reached"` (429, the inbox's or the team's daily
@@ -563,9 +566,11 @@ Events include `email.*`, `deliverability.*`, `quota.*`, `contact.*`
 v0.15.1 or later; an older server refuses a webhook naming them with 422
 `"validation_error"`. `email.failed` says why in `data.failed.reason`, and
 `email.suppressed` in `data.suppressed` (`type`, `message`, `reason`); treat
-their values as open sets.
+their values as open sets. `suppression.added` and `suppression.removed` carry
+`data.source_id`, the email whose bounce or complaint created the entry (`nil`
+otherwise).
 
-The inbox events (`inbox.created|updated|deleted|expired`,
+`email.prefetched` and the inbox events (`inbox.created|updated|deleted|expired`,
 `inbox.thread.created|folder.updated|labels.updated`,
 `inbox.email.received|sent|quarantined`, `inbox.draft.created|updated|sent|deleted`)
 reach only endpoints that name them; an endpoint subscribed to all events skips
@@ -655,7 +660,7 @@ on paths they lack and ignore options they don't know, so an inbox created with
 | v0.12.0 | `username`; inboxes that never expire by default; sends from the shared domain under its mode; `"name_review_unavailable"`; `status_code` and `name` on contacts batch errors |
 | v0.13.0 | newest-first lists; `since:` on `Inboxes.Codes.latest/3`; `quarantined` on thread items; inbox names up to 320 characters; `unread:` with an inbox-scoped key; a JSON 404 for unknown routes |
 | v0.14.0 | `shared`, `sending_mode` and `sending_mode_reason` on domains; `domain_id` on `Inboxes.create/2`; `subject` up to 998 characters |
-| v0.15.1 | `email.scheduled`, `email.failed` and `email.suppressed` webhook events; `source_id` on `suppression.added` and `suppression.removed` |
+| v0.15.1 | `email.scheduled`, `email.failed` and `email.suppressed` webhook events; `source_id` on `suppression.added` and `suppression.removed`; the `suppressed` email kept for an all-suppressed `Emails.send/2` |
 
 ## Testing against a real instance
 
