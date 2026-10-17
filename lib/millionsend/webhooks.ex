@@ -37,10 +37,10 @@ defmodule MillionSend.Webhooks do
 
   Subscribable events: `email.*` (`scheduled`, `sent`, `delivered`,
   `delivery_delayed`, `bounced`, `complained`, `failed`, `suppressed`, `opened`,
-  `clicked`, `prefetched`), `deliverability.*` (`warning`, `paused`), `quota.*`
-  (`warning`, `reached`, `paused`), `contact.*` (`created`, `updated`,
-  `deleted`, `unsubscribed`, `resubscribed`, `topic_opt_in`, `topic_opt_out`),
-  `suppression.*` (`added`, `removed`), `email.received`, and
+  `clicked`, `prefetched`, `received`), `deliverability.*` (`warning`,
+  `paused`), `quota.*` (`warning`, `reached`, `paused`), `contact.*`
+  (`created`, `updated`, `deleted`, `unsubscribed`, `resubscribed`,
+  `topic_opt_in`, `topic_opt_out`), `suppression.*` (`added`, `removed`), and
   the inbox events: `inbox.*` (`created`, `updated`, `deleted`, `expired`),
   `inbox.thread.*` (`created`, `folder.updated`, `labels.updated`),
   `inbox.email.*` (`received`, `sent`, `quarantined`) and `inbox.draft.*`
