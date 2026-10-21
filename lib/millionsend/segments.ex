@@ -11,6 +11,13 @@ defmodule MillionSend.Segments do
   plain list contacts are added to explicitly. `get/2` returns a live
   `contact_count`.
 
+  Conditions on `created_at` and `property:<key>` take the date ops `before`
+  and `after` (an ISO 8601 date or date-time, UTC when it names no zone) and
+  `in_last_days` and `not_in_last_days` (a whole number of days as a string,
+  `"1"` to `"36500"`). A property value that doesn't read as a date (see
+  `MillionSend.ContactProperties`) matches none of them, and a date still to
+  come matches neither day op.
+
       MillionSend.Segments.create(%{
         name: "Pro plan",
         filter: %{match: :all, conditions: [%{field: "property:plan", op: "equals", value: "pro"}]}
