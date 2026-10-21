@@ -269,11 +269,27 @@ link.url   # signed, contact-scoped, no expiry — hand it only to the contact
 
 ```elixir
 MillionSend.ContactProperties.create(%{key: "plan", type: :string, fallback_value: "free"})
+MillionSend.ContactProperties.create(%{key: "last_login", type: :date})   # :string | :number | :date
 MillionSend.ContactProperties.list()
 MillionSend.ContactProperties.get(id)
 MillionSend.ContactProperties.update(id, %{fallback_value: nil})   # nil clears
 MillionSend.ContactProperties.remove(id)
 ```
+
+`:date` is a MillionSend extension. A date property's values, and its
+`fallback_value`, must read as a date, or the write is a 422
+`validation_error`:
+
+- an ISO 8601 date (`"2026-01-08"`), read as midnight UTC;
+- a date-time with `T` or a space (`"2026-01-08T10:30:00Z"`,
+  `"2026-01-08 10:30"`): optional seconds, up to 9 fraction digits and an
+  optional zone (`Z`, `±HH`, `±HHMM` or `±HH:MM`), read as UTC when it names no
+  zone;
+- Unix time in seconds or milliseconds (`1767225600`) between 2000-01-01 and
+  2100-01-01, a fraction allowed.
+
+A contact's `properties` hold a date as the text it was written as:
+`%{"last_login" => %{"type" => "date", "value" => "2026-01-08"}}`.
 
 ### Topics
 
@@ -319,12 +335,24 @@ MillionSend.Segments.create(%{
   name: "Pro plan",
   filter: %{match: :all, conditions: [%{field: "property:plan", op: "equals", value: "pro"}]}
 })
+MillionSend.Segments.create(%{
+  name: "Lapsed",
+  filter: %{match: :all, conditions: [%{field: "property:last_login", op: "not_in_last_days", value: "90"}]}
+})
 MillionSend.Segments.get(id)   # includes a live contact_count
 MillionSend.Segments.list()
 MillionSend.Segments.list_contacts(id, limit: 50, include: [:properties])
 MillionSend.Segments.update(id, %{name: "Pro tier"})
 MillionSend.Segments.remove(id)
 ```
+
+Conditions on `created_at` and `property:<key>` take the date ops `before` and
+`after` (an ISO 8601 date or date-time, UTC when it names no zone) and
+`in_last_days` and `not_in_last_days` (a whole number of days as a string,
+`"1"` to `"36500"`). `in_last_days` matches from N days ago up to now and
+`not_in_last_days` anything older, so a date still to come matches neither. A
+property value that doesn't read as a date (see
+[Contact properties](#contact-properties)) matches none of them.
 
 ### Suppressions
 
@@ -650,11 +678,12 @@ Module names, function names and payloads match. Notes:
 - **No audiences.** Contacts are team-global; drop the `audience_id` from
   `contacts.*` calls. The `/audiences/...` compatibility routes are not part of
   this SDK. Target broadcasts with a `segment_id` and/or a `topic_id` instead.
-- **Segment filters, deliverability insights and usage** are MillionSend
-  extensions with no Resend counterpart, as are, on received mail and inboxes,
-  the long-poll `wait:`, received-mail reply/forward/remove, inbox safety, codes,
-  quarantine, draft reject, the `username` and `domain_id` of `Inboxes.create/2`
-  and the extension fields. So is `MillionSend.Error`'s `retry_after`.
+- **Segment filters, `date` contact properties, deliverability insights and
+  usage** are MillionSend extensions with no Resend counterpart, as are, on
+  received mail and inboxes, the long-poll `wait:`, received-mail
+  reply/forward/remove, inbox safety, codes, quarantine, draft reject, the
+  `username` and `domain_id` of `Inboxes.create/2` and the extension fields. So
+  is `MillionSend.Error`'s `retry_after`.
 - `Templates.publish/2` is a no-op: templates are published on every write.
 
 ## MillionSend versions
@@ -673,6 +702,7 @@ on paths they lack and ignore options they don't know, so an inbox created with
 | v0.14.0 | `shared`, `sending_mode` and `sending_mode_reason` on domains; `domain_id` on `Inboxes.create/2`; `subject` up to 998 characters |
 | v0.15.1 | `email.scheduled`, `email.failed` and `email.suppressed` webhook events; `source_id` on `suppression.added` and `suppression.removed`; the `suppressed` email kept for an all-suppressed `Emails.send/2` |
 | v0.16.0 | release rules: `trust_sender:` only for a `"not_allowlisted"` hold from an authenticated sender (`"trust_not_allowed"`); screening at release (`"held_by_screening"`) |
+| v0.22.0 | `date` contact properties; `before`, `after`, `in_last_days` and `not_in_last_days` on `property:<key>` segment conditions, and the two day ops on `created_at` |
 
 ## Testing against a real instance
 

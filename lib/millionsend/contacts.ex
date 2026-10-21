@@ -1,10 +1,12 @@
 defmodule MillionSend.Contacts.Contact do
   @moduledoc """
   A contact. `remove/2` populates `contact` (its id) plus `deleted`.
-  `properties` is a map of `key => %{"type" => "string" | "number", "value" => ...}`
-  (on `get/2`, and on lists and `batch_get/3` with `include: [:properties]`);
-  `topics` is the contact's `MillionSend.Contacts.TopicSubscription`s (lists and
-  `batch_get/3` with `include: [:topics]`). Both are `nil` when not requested.
+  `properties` is a map of
+  `key => %{"type" => "string" | "number" | "date", "value" => ...}`
+  (on `get/2`, and on lists and `batch_get/3` with `include: [:properties]`),
+  where a date's `value` is the text it was written as; `topics` is the
+  contact's `MillionSend.Contacts.TopicSubscription`s (lists and `batch_get/3`
+  with `include: [:topics]`). Both are `nil` when not requested.
   """
   alias MillionSend.Contacts.TopicSubscription
   alias MillionSend.Request

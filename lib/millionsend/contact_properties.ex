@@ -1,8 +1,8 @@
 defmodule MillionSend.ContactProperties.ContactProperty do
   @moduledoc """
-  A custom contact property definition: `key`, `type` (`"string" | "number"`)
-  and the `fallback_value` used when a contact has no value. `remove/2`
-  populates `id` plus `deleted`.
+  A custom contact property definition: `key`, `type`
+  (`"string" | "number" | "date"`) and the `fallback_value` used when a contact
+  has no value. `remove/2` populates `id` plus `deleted`.
   """
   @type t :: %__MODULE__{}
   defstruct [:object, :id, :key, :type, :fallback_value, :created_at, :deleted]
@@ -11,10 +11,23 @@ end
 defmodule MillionSend.ContactProperties do
   @moduledoc """
   Contact property definitions. Input maps are sent as given: `create/2`
-  accepts `key`, `type` (`:string | :number`) and `fallback_value`; `update/3`
-  accepts `fallback_value` (`nil` clears it).
+  accepts `key`, `type` (`:string | :number | :date`) and `fallback_value`;
+  `update/3` accepts `fallback_value` (`nil` clears it).
 
       MillionSend.ContactProperties.create(%{key: "plan", type: :string, fallback_value: "free"})
+      MillionSend.ContactProperties.create(%{key: "last_login", type: :date})
+
+  `:date` is a MillionSend extension. A date property's values, and its
+  `fallback_value`, must read as a date, or the write is a 422
+  `validation_error`:
+
+    * an ISO 8601 date (`"2026-01-08"`), read as midnight UTC;
+    * a date-time with `T` or a space (`"2026-01-08T10:30:00Z"`,
+      `"2026-01-08 10:30"`): optional seconds, up to 9 fraction digits and an
+      optional zone (`Z`, `±HH`, `±HHMM` or `±HH:MM`), read as UTC when it
+      names no zone;
+    * Unix time in seconds or milliseconds (`1767225600`) between 2000-01-01
+      and 2100-01-01, a fraction allowed.
   """
 
   alias MillionSend.{Client, Request}
